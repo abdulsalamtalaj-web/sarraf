@@ -94,7 +94,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MSG: ${{ github.event.head_commit.message }}
         run: |
-          NOTES="${MSG:-تحديث جديد}"
+          NOTES=$(printf '%s' "${MSG:-تحديث جديد}" | grep -viE '^(Co-Authored-By|Signed-off-by):')
           gh release create "v$VN" sarraf.apk --title "صرّاف $VN" --notes "$NOTES" --latest
 
       - name: تحديث version.json
@@ -108,7 +108,8 @@ jobs:
               versionCode: Number(process.env.VC),
               versionName: process.env.VN,
               apkUrl: `https://github.com/${process.env.REPO}/releases/download/v${process.env.VN}/sarraf.apk`,
-              notes: (process.env.MSG || "تحديث جديد").trim(),
+              // ملاحظات التحديث = رسالة الـ commit بدون سطور التوقيع
+              notes: (process.env.MSG || "تحديث جديد").split("\n").filter((l) => !/^(Co-Authored-By|Signed-off-by):/i.test(l.trim())).join("\n").trim(),
               date: new Date().toISOString(),
             };
             fs.writeFileSync("docs/version.json", JSON.stringify(v, null, 2) + "\n");
