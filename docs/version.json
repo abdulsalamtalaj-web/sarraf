@@ -1,7 +1,7 @@
 {
-  "versionCode": 12,
-  "versionName": "3.3.2",
-  "apkUrl": "https://github.com/abdulsalamtalaj-web/sarraf/releases/download/v3.3.2/sarraf.apk",
-  "notes": "تصليح خطوة التأكد من التوقيع بالبناء التلقائي\n\n- استعمال build-tools 35 (المتوافقة مع Java 17) وإظهار الخطأ كامل\n- التأكد إنو المفتاح هو نفس مفتاح صرّاف\n- تحديث actions للإصدار 5\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
-  "date": "2026-11-13T10:54:42.080Z"
+  "versionCode": 13,
+  "versionName": "3.3.3",
+  "apkUrl": "https://github.com/abdulsalamtalaj-web/sarraf/releases/download/v3.3.3/sarraf.apk",
+  "notes": "ملاحظات التحديث صارت أوضح",
+  "date": "2026-11-13T10:58:33.189Z"
 }
