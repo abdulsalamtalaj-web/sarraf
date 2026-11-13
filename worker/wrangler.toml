@@ -1,0 +1,37 @@
+name = "sarraf-rates"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+workers_dev = true
+
+# حزم التحديث الهوائي (ملفات ثابتة مجانية): public/ota/web-N.zip
+[assets]
+directory = "./public"
+
+# صفحة سياسة الخصوصية تُضمَّن كنص
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
+# لقطة أسعار كل ساعة (لمسار /history)
+[triggers]
+crons = ["0 * * * *"]
+
+# مخزن السجل (KV). أنشئه بالأمر:  npx wrangler kv namespace create HISTORY
+# ثم ضع الـ id الذي يظهر لك مكان القيمة أدناه.
+[[kv_namespaces]]
+binding = "HISTORY"
+id = "PUT_YOUR_KV_ID_HERE"
+
+# ===== ملف إعدادات المصادر (لا حاجة لتعديل الكود) =====
+[vars]
+# قنوات العملات بالترتيب (الأولى أساسية والباقي احتياطي)، اسم القناة فقط بدون t.me/
+# كل القنوات تُقرأ مع بعض؛ إذا اختلفت أكثر من 2% يظهر تنبيه "المصادر مختلفة" بالتطبيق.
+CHANNELS = "exchange_Currencyy,aboothman33"
+# قنوات الذهب. فارغ = نفس قنوات العملات.
+GOLD_CHANNELS = ""
+# احتياطي مجاني لسعر الأونصة بالدولار (بدون مفتاح)
+GOLD_API = "https://api.gold-api.com/price/XAU"
+# رابط تحميل الـ APK (ميديا فاير أو GitHub Releases...). الرابط الثابت اللي بتنشره هو <الـ Worker>/get
+# وبيحوّل لهون، فلما تبدّل الملف بتغيّر هالسطر بس وكل الروابط القديمة بتضل شغالة.
+DOWNLOAD_URL = ""

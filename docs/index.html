@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>صرّاف – سعر الدولار والتركي والذهب بسوريا</title>
+<meta name="description" content="صرّاف: تطبيق مجاني لأسعار الدولار والليرة التركية واليورو والذهب بالسوق السورية، مع تحويل بين الليرة الجديدة والقديمة." />
+<meta property="og:title" content="صرّاف – حمّله ببلاش" />
+<meta property="og:description" content="سعر الدولار والتركي والذهب بسوريا، لحظة بلحظة. مجاني وبدون إعلانات." />
+<meta property="og:image" content="logo.png" />
+<meta name="theme-color" content="#0A1410" />
+<link rel="icon" href="logo.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;700&family=Manrope:wght@600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0A1410; --card: #12201A; --card-2: #18291F; --ink: #EEF4F0;
+    --ink-2: rgba(238,244,240,.80); --ink-3: rgba(238,244,240,.58);
+    --gold: #F5C542; --syp: #1DB954; --usd: #3B82F6; --try: #EF4444;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body { font: 16px/1.7 "IBM Plex Sans Arabic", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  main { max-width: 520px; margin: 0 auto; padding: 48px 16px 40px; display: flex; flex-direction: column; align-items: center; gap: 24px; text-align: center; }
+  .logo { width: 112px; height: 112px; border-radius: 28px; box-shadow: 0 0 0 1px rgba(245,197,66,.2), 0 16px 48px rgba(245,197,66,.12); }
+  h1 { font-size: 40px; color: var(--gold); margin: 0; line-height: 1.2; }
+  .tag { color: var(--ink-2); margin: -16px 0 0; font-size: 17px; }
+  .dl { display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; max-width: 360px; min-height: 60px;
+        background: linear-gradient(180deg, #F7CF5C, #E9B730); color: #231a03; text-decoration: none; font-weight: 700; font-size: 20px;
+        border-radius: 16px; box-shadow: 0 1px 0 rgba(255,255,255,.35) inset, 0 10px 28px rgba(245,197,66,.22); transition: transform .16s; }
+  .dl:active { transform: scale(.97); }
+  .ver { color: var(--ink-3); font-size: 14px; margin-top: -12px; font-family: Manrope, sans-serif; }
+  .card { width: 100%; background: var(--card); border-radius: 20px; padding: 20px; text-align: right; box-shadow: 0 8px 24px rgba(0,8,4,.35); }
+  .card h2 { font-size: 16px; margin: 0 0 8px; color: var(--ink); }
+  .card ul, .card ol { margin: 0; padding-inline-start: 20px; color: var(--ink-2); }
+  .card li + li { margin-top: 4px; }
+  .feat li::marker { color: var(--syp); }
+  .social { display: flex; gap: 12px; justify-content: center; }
+  .social a { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+  .social svg { width: 24px; height: 24px; fill: #fff; }
+  .muted { color: var(--ink-3); font-size: 14px; }
+  a.link { color: var(--ink-3); }
+  footer { color: var(--ink-3); font-size: 13px; text-align: center; padding-bottom: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="logo.png" alt="شعار صرّاف" width="112" height="112" />
+  <h1>صرّاف</h1>
+  <p class="tag">سعر الدولار والتركي والذهب بسوريا، ببلاش وبلا إعلانات</p>
+
+  <a class="dl" id="dl" href="https://github.com/abdulsalamtalaj-web/sarraf/releases/latest/download/sarraf.apk">⬇ حمّل صرّاف</a>
+  <div class="ver" id="ver">أندرويد 6 وأحدث</div>
+
+  <section class="card feat">
+    <h2>شو فيه؟</h2>
+    <ul>
+      <li>سعر الدولار والتركي واليورو بالليرة الجديدة والقديمة، شراء ومبيع</li>
+      <li>الذهب: عيار 21 و18 و24 والليرة الذهب والأونصة، مع حاسبة</li>
+      <li>تحويل قديم ⇄ جديد والمبلغ بالكلمات</li>
+      <li>إشعارات بالأوقات اللي بتختارها، وتنبيه إذا تغيّر السعر</li>
+      <li>ويدجت للشاشة الرئيسية، وبيشتغل بلا نت بآخر سعر</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>كيف بثبّته؟</h2>
+    <ol>
+      <li>اضغط "حمّل صرّاف" وانطر لحتى يخلص التنزيل.</li>
+      <li>افتح الملف <b>sarraf.apk</b>.</li>
+      <li>إذا طلب "السماح بالتثبيت من هالمصدر"، فعّلها وارجع.</li>
+      <li>اضغط "تثبيت". التحديثات الجاية بتوصلك من جوا التطبيق.</li>
+    </ol>
+  </section>
+
+  <div class="social" aria-label="قنواتي">
+    <a href="https://www.instagram.com/abdulsalamthalji" aria-label="إنستغرام" style="background:radial-gradient(circle at 30% 107%,#fdf497 0%,#fd5949 45%,#d6249f 60%,#285AEB 90%)"><svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.8.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.3.1 1.6.1 4.8s0 3.6-.1 4.8c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.3.1-1.6.1-4.8.1s-3.6 0-4.8-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.8c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4C8.4 2.2 8.8 2.2 12 2.2zm0 4.8a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0 8.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4zm5.2-9.6a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z"/></svg></a>
+    <a href="https://www.facebook.com/share/1HvdJ4i48U/" aria-label="فيسبوك" style="background:#0866FF"><svg viewBox="0 0 24 24"><path d="M9.1 23.7v-8H6.6V12h2.5v-1.6c0-4.1 1.9-6 5.9-6 .8 0 2.1.2 2.6.3v3.3c-.3 0-.8-.1-1.4-.1-2 0-2.7.7-2.7 2.7V12h3.9l-.7 3.7h-3.2v8.1C18.4 23 22 18.9 22 12c0-5.5-4.5-10-10-10S2 6.5 2 12c0 4.7 3.2 8.6 7.1 9.7z"/></svg></a>
+    <a href="https://www.youtube.com/channel/UCsfUZ57iOBIKdqFLVj1Qexw" aria-label="يوتيوب" style="background:#FF0000"><svg viewBox="0 0 24 24"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8zM9.6 15.6V8.4l6.2 3.6-6.2 3.6z"/></svg></a>
+    <a href="https://www.tiktok.com/@abdulsalamthalji" aria-label="تيك توك" style="background:#000"><svg viewBox="0 0 24 24"><path d="M12.5.02C13.8 0 15.1.01 16.4 0c.1 1.5.6 3.1 1.8 4.2 1.1 1.1 2.7 1.6 4.2 1.8v4c-1.4 0-2.9-.3-4.2-1-.6-.3-1.1-.6-1.6-.9v8.7c-.1 1.4-.5 2.8-1.3 3.9-1.3 1.9-3.6 3.2-5.9 3.2-1.4.1-2.9-.3-4.1-1C3.3 21.6 1.9 19.4 1.7 17c0-.5 0-1 0-1.5.2-2 1.2-3.9 2.7-5.2 1.7-1.5 4.1-2.2 6.4-1.8v4.4c-1-.3-2.2-.2-3.1.4-.6.4-1.1 1-1.4 1.8-.2.5-.2 1.1-.1 1.7.3 1.6 1.8 3 3.5 2.9 1.1 0 2.2-.7 2.8-1.6.2-.3.4-.7.4-1.1.1-1.8.1-3.6.1-5.4V0z"/></svg></a>
+  </div>
+
+  <p class="muted">من صنع عبد السلام ثلجة · <a class="link" href="privacy.html">سياسة الخصوصية</a></p>
+</main>
+<footer>الأسعار تقريبية من السوق الموازية ولأغراض استرشادية فقط.</footer>
+<script>
+  // رقم آخر نسخة ورابطها من version.json (اللي بيحدّثه GitHub Actions مع كل نسخة)
+  fetch('version.json?t=' + Date.now()).then(function (r) { return r.json(); }).then(function (v) {
+    if (v && v.apkUrl) document.getElementById('dl').href = v.apkUrl;
+    if (v && v.versionName) document.getElementById('ver').textContent = 'النسخة ' + v.versionName + ' · أندرويد 6 وأحدث';
+  }).catch(function () {});
+</script>
+</body>
+</html>

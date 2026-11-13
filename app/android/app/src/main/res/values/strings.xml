@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">صرّاف</string>
+    <string name="title_activity_main">صرّاف</string>
+    <string name="package_name">com.liraconverter.app</string>
+    <string name="custom_url_scheme">com.liraconverter.app</string>
+    <string name="widget_desc">أول 3 عملات وغرام الذهب عيار 21</string>
+    <string name="widget_small_desc">سعر الدولار بالليرة الجديدة</string>
+</resources>

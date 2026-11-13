@@ -1,0 +1,8 @@
+# نهايات أسطر LF بالمستودع (gradlew لازم LF ليشتغل على خادم البناء Linux)
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.woff2 binary
+*.jar binary
+*.zip binary

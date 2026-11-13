@@ -1,0 +1,22 @@
+{
+  "_help": "المعلومة الطبية اليومية + فيديو الأسبوع. عدّل هالملف واعمل push، وبيوصل للتطبيق بدون تحديث. كل معلومة: text (سطر أو سطرين) و video (رابط). weekly_video بيتضاف لإشعار الأسعار مرة بالأسبوع.",
+  "tips": [
+    {
+      "text": "قبل أي عملية فيها تخدير عام، الصيام عن الأكل 6 ساعات عادةً، والسوائل الصافية مسموحة غالباً حتى ساعتين قبلها. اسأل طبيبك دائماً.",
+      "video": "https://www.youtube.com/channel/UCsfUZ57iOBIKdqFLVj1Qexw"
+    },
+    {
+      "text": "قسطرة القلب التشخيصية غالباً تتم بتخدير موضعي مكان الإدخال، والمريض يبقى صاحي طوال الإجراء.",
+      "video": "https://www.youtube.com/channel/UCsfUZ57iOBIKdqFLVj1Qexw"
+    },
+    {
+      "text": "خبّر طبيب التخدير عن كل أدويتك، خصوصاً مميعات الدم، لأن بعضها لازم يوقف قبل العملية بأيام.",
+      "video": "https://www.youtube.com/channel/UCsfUZ57iOBIKdqFLVj1Qexw"
+    }
+  ],
+  "weekly_video": {
+    "title": "فيديو جديد على قناتي",
+    "url": "https://www.youtube.com/channel/UCsfUZ57iOBIKdqFLVj1Qexw",
+    "date": "2026-11-13"
+  }
+}

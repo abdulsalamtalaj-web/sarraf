@@ -1,0 +1,15 @@
+{
+  "name": "lira-rates-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/samples.test.mjs && node test/test.mjs",
+    "test:offline": "node test/samples.test.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

@@ -1,0 +1,78 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace "com.liraconverter.app"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.liraconverter.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        // على GitHub Actions الرقمين بيجوا من رقم التشغيل (-PversionCode= -PversionName=)
+        versionCode((project.findProperty("versionCode") ?: "6") as Integer)
+        versionName((project.findProperty("versionName") ?: "3.3") as String)
+        // الموبايلات الحقيقية كلها ARM: حذف x86 و x86_64 يوفّر حوالي 3.7 ميغا من مكتبات محرك الخلفية
+        // (لتجربة على محاكي x86_64 بدون ترجمة ARM: ./gradlew assembleDebug -PwithX86)
+        ndk {
+            if (project.hasProperty('withX86')) abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            else abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    // توقيع نسخة release: يقرأ بيانات المفتاح من android/keystore.properties إن وُجد (نفس المفتاح القديم ليتحدّث فوقه)
+    def ksFile = rootProject.file("keystore.properties")
+    def ks = new Properties()
+    if (ksFile.exists()) { ks.load(new FileInputStream(ksFile)) }
+    signingConfigs {
+        release {
+            if (ksFile.exists()) {
+                storeFile file(ks['storeFile'])
+                storePassword ks['storePassword']
+                keyAlias ks['keyAlias']
+                keyPassword ks['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (ksFile.exists()) { signingConfig signingConfigs.release }
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+		dirs '../../node_modules/@capacitor/background-runner/android/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

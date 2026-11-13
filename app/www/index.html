@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0A1410" />
+  <meta name="color-scheme" content="dark" />
+  <title>صرّاف</title>
+  <link rel="preload" href="fonts/plex-arabic-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="fonts/manrope-700.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ================= الشاشة الرئيسية ================= -->
+  <div id="view-main" class="view">
+    <div id="ptr" class="ptr" aria-hidden="true"><div class="ptr-spin"></div></div>
+    <header class="top">
+      <div class="brand">
+        <img src="img/logo-symbol.png" alt="" width="32" height="32" />
+        <h1>صرّاف</h1>
+        <span id="livePill" class="live" title="حالة التحديث"><i></i><span>مباشر</span></span>
+      </div>
+      <div class="top-actions">
+        <button id="menuBtn" class="icon-btn press" aria-label="القائمة" aria-controls="drawer" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="staleBanner" class="banner" hidden></div>
+
+    <!-- شريط التحديث: نسخة APK جديدة أو تحديث هوائي للواجهة -->
+    <div id="updateBar" class="update-bar" role="status" hidden>
+      <div class="ub-text"><b id="updateTitle"></b><span id="updateNotes" class="small"></span></div>
+      <button id="updateGo" class="primary press small-btn"></button>
+      <button id="updateClose" class="ub-close" aria-label="إخفاء">×</button>
+    </div>
+
+    <main>
+      <!-- تبويب سريع -->
+      <div class="seg tabs enter" role="tablist" aria-label="نوع التحويل">
+        <button role="tab" data-tab="convert" class="press">محوّل العملات</button>
+        <button role="tab" data-tab="oldnew" class="press">قديم ⇄ جديد</button>
+      </div>
+
+      <!-- ===== محوّل العملات ===== -->
+      <section id="panel-convert" class="panel">
+        <div class="card enter">
+          <label for="amount" class="lbl" id="amountLbl">المبلغ</label>
+          <input id="amount" class="amount num-font" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="1" />
+          <div id="quickAmts" class="quick amt-quick" aria-label="مبالغ سريعة"></div>
+          <div id="srcChips" class="chips" role="radiogroup" aria-label="العملة المصدر"></div>
+          <div id="karatPick" class="seg small-seg" role="radiogroup" hidden></div>
+          <div class="seg mode" role="radiogroup" aria-label="نوع السعر">
+            <button data-mode="buy" class="press" role="radio">سعر الشراء</button>
+            <button data-mode="sell" class="press" role="radio">سعر المبيع</button>
+          </div>
+        </div>
+        <div id="results" class="card list-card enter" aria-live="polite"></div>
+      </section>
+
+      <!-- ===== قديم ⇄ جديد ===== -->
+      <section id="panel-oldnew" class="panel" hidden>
+        <div class="card on-card enter">
+          <div id="onFields" class="on-fields">
+            <label class="on-field fam-syp" data-unit="old">
+              <span class="lbl">ليرة قديمة</span>
+              <input id="onOld" class="on-input num-font" type="text" inputmode="decimal" autocomplete="off" placeholder="0" />
+            </label>
+            <button id="onSwap" class="swap press" aria-label="قلب الاتجاه">⇅</button>
+            <label class="on-field fam-syp" data-unit="new">
+              <span class="lbl">ليرة جديدة</span>
+              <input id="onNew" class="on-input num-font" type="text" inputmode="decimal" autocomplete="off" placeholder="0" />
+            </label>
+          </div>
+          <p id="onWords" class="words"></p>
+          <div id="onQuick" class="quick"></div>
+          <div class="on-foot">
+            <span class="muted small" id="onRatio"></span>
+            <button id="onCopy" class="ghost press small-btn">⧉ نسخ النتيجة</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== أسعار السوق ===== -->
+      <section id="ratesCard" class="card list-card enter">
+        <div class="card-head">
+          <h2>أسعار السوق</h2>
+          <span class="muted small">شراء · مبيع</span>
+        </div>
+        <div id="disagreeNote" class="note" hidden></div>
+        <div id="ratesList"></div>
+        <div id="remitBox" hidden>
+          <div class="sub-head">عملات الحوالات <span class="tag">محسوب</span></div>
+          <div id="remitList"></div>
+        </div>
+        <button id="timesBtn" class="times press" aria-expanded="false">
+          <span id="timesShort">—</span>
+          <span class="chev" aria-hidden="true">⌄</span>
+        </button>
+        <div id="timesMore" class="times-more" hidden>
+          <div>آخر نشرة من القناة: <b id="postTime">—</b></div>
+          <div>آخر تحديث: <b id="fetchTime">—</b></div>
+          <div id="sourceLine"></div>
+          <div class="muted small">عملات الحوالات محسوبة من السعر العالمي × دولار السوق، مو من القناة.</div>
+        </div>
+        <button id="shareBtn" class="ghost press share-btn">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
+          شارك السعر
+        </button>
+      </section>
+
+      <!-- ===== الذهب ===== -->
+      <section id="goldCard" class="card gold-card enter" hidden>
+        <div class="card-head">
+          <h2>الذهب <span id="goldEst" class="tag" hidden>سعر تقديري</span></h2>
+        </div>
+        <div id="goldCur" class="seg small-seg gold-seg" role="radiogroup" aria-label="عملة سعر الذهب">
+          <button data-cur="USD" class="press" role="radio">$ دولار</button>
+          <button data-cur="TRY" class="press" role="radio">₺ تركي</button>
+          <button data-cur="SYP" class="press" role="radio">سوري جديد</button>
+          <button data-cur="SYP_OLD" class="press" role="radio">سوري قديم</button>
+        </div>
+        <div id="goldList"></div>
+        <div class="gold-calc">
+          <div class="calc-head">
+            <div class="lbl">حاسبة الذهب</div>
+            <div id="gcDir" class="seg small-seg gc-dir" role="radiogroup" aria-label="اتجاه الحساب">
+              <button data-dir="g2m" class="press" role="radio">غرامات ← سعر</button>
+              <button data-dir="m2g" class="press" role="radio">مبلغ ← غرامات</button>
+            </div>
+          </div>
+          <div class="calc-row">
+            <input id="gcGrams" class="calc-in num-font" type="text" inputmode="decimal" autocomplete="off" value="1" aria-label="عدد الغرامات" />
+            <div id="gcKarat" class="seg small-seg" role="radiogroup" aria-label="العيار"></div>
+          </div>
+          <label class="fee-row">
+            <span class="muted small">أجرة الصياغة للغرام <span class="opt">(اختياري)</span></span>
+            <span class="fee-in-wrap"><input id="gcFee" class="calc-in fee-in num-font" type="text" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="أجرة الصياغة للغرام" /><span id="gcFeeSym" class="muted small"></span></span>
+          </label>
+          <div class="calc-out"><span class="muted small" id="gcUnit">غرام</span><span class="calc-val"><b id="gcResult" class="num-font">—</b> <span id="gcSym" class="muted small"></span></span></div>
+          <div id="gcBreak" class="muted small calc-break" hidden></div>
+        </div>
+        <div class="times-line muted small">آخر تحديث للذهب: <span id="goldTime">—</span></div>
+      </section>
+
+      <!-- ===== الرسم البياني ===== -->
+      <section id="chartCard" class="card enter">
+        <div class="card-head">
+          <h2>حركة السعر</h2>
+          <span id="chartChange" class="chg"></span>
+        </div>
+        <div class="chart-ctrls">
+          <div id="chartWhat" class="seg small-seg" role="radiogroup" aria-label="شو بدك تشوف">
+            <button data-what="usd" class="press" role="radio">الدولار</button>
+            <button data-what="g21" class="press" role="radio">غرام 21</button>
+          </div>
+          <div id="chartRange" class="seg small-seg" role="radiogroup" aria-label="المدة">
+            <button data-days="7" class="press" role="radio">7 أيام</button>
+            <button data-days="30" class="press" role="radio">30 يوم</button>
+          </div>
+        </div>
+        <div id="chart" class="chart" aria-live="polite"></div>
+        <p id="chartNote" class="muted small chart-note"></p>
+      </section>
+
+      <button id="signature" class="signature">صنع بواسطة عبد السلام ثلجة</button>
+
+      <section id="notifyPrompt" class="card soft-card" hidden>
+        <p>🔔 بدك يوصلك سعر الدولار والتركي والذهب كل يوم الصبح الساعة <b id="notifyPromptTime">9:00</b>؟</p>
+        <p class="muted small">إشعار واحد باليوم، وبتقدر تطفيه أو تغيّر وقته من الإعدادات.</p>
+        <div class="row-btns">
+          <button id="notifyYes" class="primary press">إي، فعّلها</button>
+          <button id="notifyNo" class="ghost press">لا، شكراً</button>
+        </div>
+      </section>
+
+      <section id="tipCard" class="card tip-card" hidden>
+        <button id="tipClose" class="tip-close" aria-label="إخفاء">×</button>
+        <div class="tip-title">🩺 معلومة طبية اليوم</div>
+        <p id="tipText"></p>
+        <button id="tipVideo" class="ghost small-btn press">▶ شوف الفيديو</button>
+      </section>
+
+      <p class="foot muted small">الأسعار تقريبية من السوق الموازية ولأغراض استرشادية فقط.</p>
+    </main>
+  </div>
+
+  <!-- ================= الإعدادات ================= -->
+  <div id="view-settings" class="view" hidden>
+    <header class="top sub">
+      <button class="icon-btn back press" data-back aria-label="رجوع">→</button>
+      <h1>الإعدادات</h1>
+      <span class="icon-spacer"></span>
+    </header>
+    <main>
+      <section class="card set-links">
+        <button class="set-link press" data-go="order"><span class="ni">↕️</span><span class="sl-t">ترتيب العملات وإخفاؤها</span><span class="chev" aria-hidden="true">‹</span></button>
+      </section>
+
+      <section id="notifySection" class="card">
+        <h2>الإشعارات حسب الوقت</h2>
+        <label class="switch-row">
+          <span>إشعار بأسعار العملات المفعّلة بأوقات محددة</span>
+          <input id="notifyEnabled" type="checkbox" />
+        </label>
+        <div class="lbl">الأوقات (بتوقيت دمشق) — لحد 3 باليوم</div>
+        <div id="notifyTimes" class="times-list"></div>
+        <button id="addTime" class="ghost press small-btn">+ إضافة وقت</button>
+        <p id="notifyStatus" class="muted small"></p>
+        <div id="bgWarn" class="warn-card" hidden>
+          <b>⚠️ ممكن يتأخر الإشعار أو ما يوصل</b>
+          <p id="bgWarnText"></p>
+          <ol id="bgWarnSteps"></ol>
+          <div class="row-btns">
+            <button id="bgFixExact" class="primary press small-btn" hidden>اسمح بالمنبّهات</button>
+            <button id="bgFixBattery" class="ghost press small-btn">افتح إعدادات البطارية</button>
+          </div>
+        </div>
+        <button id="notifyTest" class="ghost press">إرسال إشعار تجريبي الآن</button>
+      </section>
+
+      <section id="changeSection" class="card">
+        <h2>عند تغيّر السعر</h2>
+        <label class="switch-row">
+          <span>خبّرني إذا تغيّر الدولار أو التركي أو الذهب أكتر من النسبة</span>
+          <input id="changeEnabled" type="checkbox" />
+        </label>
+        <div class="pct-row">
+          <input id="changePct" class="text-in alert-in num-font" type="text" inputmode="decimal" dir="ltr" value="1" aria-label="نسبة التغيّر" />
+          <span class="pct-sign">%</span>
+          <span class="muted small">بحد أقصى إشعار كل ساعتين</span>
+        </div>
+        <p id="changeStatus" class="muted small"></p>
+      </section>
+
+      <section id="alertSection" class="card">
+        <h2>تنبيه سعر محدد</h2>
+        <p class="muted small">خبّرني إذا الدولار صار…</p>
+        <div class="alert-row">
+          <div id="alertDir" class="seg small-seg" role="radiogroup" aria-label="الاتجاه">
+            <button data-dir="above" class="press" role="radio">فوق</button>
+            <button data-dir="below" class="press" role="radio">تحت</button>
+          </div>
+          <input id="alertValue" class="text-in alert-in num-font" type="text" inputmode="decimal" dir="ltr" placeholder="150" aria-label="السعر بالليرة الجديدة" />
+          <span class="muted small">ل.س</span>
+        </div>
+        <label class="switch-row">
+          <span>شغّل التنبيه</span>
+          <input id="alertEnabled" type="checkbox" />
+        </label>
+        <p id="alertStatus" class="muted small"></p>
+      </section>
+
+      <section id="sourceSection" class="card" hidden>
+        <h2>مصدر الأسعار <span class="tag">للمطوّر</span></h2>
+        <label class="lbl" for="apiUrl">رابط الخادم (Cloudflare Worker)</label>
+        <input id="apiUrl" class="text-in" type="url" dir="ltr" placeholder="https://sarraf-rates.xxx.workers.dev/rates" />
+        <p class="muted small">إذا تُرك فاضي أو ما ردّ، التطبيق بيقرأ القنوات مباشرة (كل 5 دقايق).</p>
+        <label class="lbl" for="channels">قنوات تليجرام (مفصولة بفواصل)</label>
+        <input id="channels" class="text-in" type="text" dir="ltr" />
+        <div class="row-btns">
+          <button id="saveSettings" class="primary press">حفظ</button>
+          <button id="hideDev" class="ghost press">إخفاء</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ================= ترتيب العملات ================= -->
+  <div id="view-order" class="view" hidden>
+    <header class="top sub">
+      <button class="icon-btn back press" data-back aria-label="رجوع">→</button>
+      <h1>ترتيب العملات</h1>
+      <span class="icon-spacer"></span>
+    </header>
+    <main>
+      <p class="muted small order-hint">اسحب ⠿ لتغيير الترتيب، وطفّي أي عملة ما بدك تشوفها. الترتيب بينطبق على الشاشة الرئيسية والمشاركة والإشعارات والويدجت.</p>
+      <div id="orderList" class="card order-list" role="list"></div>
+      <button id="orderReset" class="ghost press">رجّع الترتيب الأصلي</button>
+    </main>
+  </div>
+
+  <!-- ================= عن التطبيق والمطوّر ================= -->
+  <div id="view-about" class="view" hidden>
+    <header class="top sub">
+      <button class="icon-btn back press" data-back aria-label="رجوع">→</button>
+      <h1>عن التطبيق</h1>
+      <span class="icon-spacer"></span>
+    </header>
+    <main class="about">
+      <img id="devPhoto" class="dev-photo" alt="صورة المطوّر" width="112" height="112" hidden />
+      <h2 id="devName"></h2>
+      <p id="devTagline" class="muted"></p>
+      <div class="social-row" data-social></div>
+      <button class="contact-btn press" data-contact></button>
+      <div class="about-app">
+        <img src="img/logo.png" alt="" width="56" height="56" />
+        <div><b>صرّاف</b><div class="muted small">سعر الدولار والتركي والذهب بسوريا · مجاني بالكامل · <button id="appVersion" class="ver-btn"></button></div></div>
+      </div>
+      <button class="link-btn press" data-go="privacy">سياسة الخصوصية</button>
+    </main>
+  </div>
+
+  <!-- ================= سياسة الخصوصية ================= -->
+  <div id="view-privacy" class="view" hidden>
+    <header class="top sub">
+      <button class="icon-btn back press" data-back aria-label="رجوع">→</button>
+      <h1>سياسة الخصوصية</h1>
+      <span class="icon-spacer"></span>
+    </header>
+    <main id="privacyBody" class="privacy"></main>
+  </div>
+
+  <!-- ================= القائمة الجانبية ================= -->
+  <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+  <aside id="drawer" class="drawer" aria-hidden="true" aria-label="القائمة">
+    <div class="drawer-brand"><img src="img/logo-symbol.png" alt="" width="28" height="28" /><b>صرّاف</b></div>
+    <div class="drawer-head">
+      <img id="drawerPhoto" class="drawer-photo" alt="" width="72" height="72" hidden />
+      <div class="drawer-name" id="drawerName"></div>
+      <div class="drawer-sub" id="drawerSub"></div>
+    </div>
+    <div class="social-row" data-social></div>
+    <button class="contact-btn press" data-contact></button>
+    <nav class="drawer-nav">
+      <button class="press" data-go="settings"><span class="ni">⚙️</span>الإعدادات</button>
+      <button class="press" data-go="order"><span class="ni">↕️</span>ترتيب العملات</button>
+      <button class="press" data-go="notifications"><span class="ni">🔔</span>الإشعارات</button>
+      <button class="press" id="checkUpdBtn"><span class="ni">⬇️</span>فحص التحديثات</button>
+      <button class="press" data-go="about"><span class="ni">ℹ️</span>عن التطبيق</button>
+    </nav>
+    <div id="drawerVer" class="drawer-ver"></div>
+  </aside>
+
+  <!-- ================= قائمة المشاركة ================= -->
+  <div id="shareBackdrop" class="drawer-backdrop" hidden></div>
+  <div id="shareSheet" class="sheet" role="dialog" aria-label="شارك السعر" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <h2>شارك السعر</h2>
+    <p class="muted small">رابط تحميل التطبيق وحسابك مكتوبين على الصورة. النص بينّسخ لحاله، الصقه مع الصورة (إنستغرام وفيسبوك ما بياخدوا النص المرفق).</p>
+    <button class="sheet-opt press" data-share="post"><span class="so-ic" aria-hidden="true">🖼️</span><span><b>صورة منشور</b><small>فيسبوك · إنستغرام (4:5)</small></span></button>
+    <button class="sheet-opt press" data-share="story"><span class="so-ic" aria-hidden="true">📱</span><span><b>صورة ستوري</b><small>ستوري إنستغرام وفيسبوك · حالة واتساب (9:16)</small></span></button>
+    <button class="sheet-opt press" data-share="text"><span class="so-ic" aria-hidden="true">💬</span><span><b>نص بس</b><small>واتساب · تلغرام · رسائل</small></span></button>
+  </div>
+
+  <!-- ================= نافذة التحديث ================= -->
+  <div id="updBackdrop" class="drawer-backdrop" hidden></div>
+  <div id="updModal" class="sheet upd-sheet" role="dialog" aria-label="تحديث جديد" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <h2>في تحديث جديد ✨ <span id="updVer" class="tag num-font"></span></h2>
+    <div id="updNotes" class="upd-notes"></div>
+    <div id="updProgress" class="upd-progress" hidden><div class="upd-track"><i id="updBar"></i></div><span id="updPct" class="muted small num-font"></span></div>
+    <p id="updMsg" class="muted small upd-msg"></p>
+    <div class="row-btns">
+      <button id="updGo" class="primary press">حدّث الآن</button>
+      <button id="updLater" class="ghost press">لاحقاً</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

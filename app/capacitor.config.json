@@ -1,0 +1,26 @@
+{
+  "appId": "com.liraconverter.app",
+  "appName": "صرّاف",
+  "webDir": "www",
+  "backgroundColor": "#0f1419",
+  "android": {
+    "backgroundColor": "#0f1419"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_sarraf",
+      "iconColor": "#D4AF37"
+    },
+    "BackgroundRunner": {
+      "label": "com.liraconverter.app.daily",
+      "src": "runners/daily.js",
+      "event": "dailyCheck",
+      "repeat": true,
+      "interval": 15,
+      "autoStart": true
+    }
+  }
+}

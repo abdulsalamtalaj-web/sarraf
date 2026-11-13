@@ -1,0 +1,22 @@
+{
+  "apk": {
+    "versionCode": 5,
+    "versionName": "3.2",
+    "notes": "",
+    "force": false
+  },
+  "web": {
+    "build": 1,
+    "minNative": 5,
+    "url": "/ota/web-1.zip",
+    "sha256": "",
+    "notes": ""
+  },
+  "config": {
+    "channels": [
+      "exchange_Currencyy",
+      "aboothman33"
+    ],
+    "gold_channels": ""
+  }
+}

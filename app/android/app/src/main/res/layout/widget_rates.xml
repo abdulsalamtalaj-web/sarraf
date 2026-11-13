@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ويدجت 4×2: أول 3 عملات حسب ترتيب المستخدم + غرام 21 + وقت التحديث -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:layoutDirection="rtl" android:padding="12dp" android:background="@drawable/widget_bg">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+        <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@mipmap/ic_launcher_round" android:contentDescription="@null" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="6dp" android:text="صرّاف" android:textColor="#F5C542" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:id="@+id/w_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#94A39B" android:textSize="12sp" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/w_row1" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:id="@+id/w_l1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#C9D3CE" android:textSize="13sp" android:maxLines="1" />
+        <TextView android:id="@+id/w_v1" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="left|center_vertical" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/w_row2" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:id="@+id/w_l2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#C9D3CE" android:textSize="13sp" android:maxLines="1" />
+        <TextView android:id="@+id/w_v2" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="left|center_vertical" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/w_row3" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:id="@+id/w_l3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#C9D3CE" android:textSize="13sp" android:maxLines="1" />
+        <TextView android:id="@+id/w_v3" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="left|center_vertical" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/w_rowg" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="غرام 21 (ل.س)" android:textColor="#C9D3CE" android:textSize="13sp" />
+        <TextView android:id="@+id/w_gold" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="left|center_vertical" android:textDirection="ltr" android:textColor="#F5C542" android:textSize="16sp" android:textStyle="bold" />
+    </LinearLayout>
+</LinearLayout>

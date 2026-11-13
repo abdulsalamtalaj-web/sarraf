@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#006C35"/>
+<text x="256" y="236" fill="#FFFFFF" font-family="Noto Naskh Arabic, Amiri, Scheherazade, Arial, sans-serif" font-size="64" font-weight="700" text-anchor="middle" direction="rtl">لا إله إلا الله</text>
+<text x="256" y="306" fill="#FFFFFF" font-family="Noto Naskh Arabic, Amiri, Scheherazade, Arial, sans-serif" font-size="60" font-weight="700" text-anchor="middle" direction="rtl">محمد رسول الله</text>
+<g fill="#FFFFFF"><rect x="112" y="352" width="268" height="12" rx="6"/><path d="M380 346 h22 v24 h-22 z"/><rect x="402" y="353" width="24" height="10" rx="5"/><path d="M112 352 l-16 6 l16 6 z"/></g></svg>

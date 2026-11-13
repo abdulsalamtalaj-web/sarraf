@@ -1,0 +1,42 @@
+# ===== أسرار: ممنوع ترفع أي منها =====
+*.jks
+*.keystore
+*.p12
+*.pem
+keystore.properties
+local.properties
+.env
+.env.*
+.dev.vars
+
+# ===== ملفات البناء =====
+node_modules/
+build/
+.gradle/
+*.apk
+*.aab
+dist/
+app/android/app/src/main/assets/public/
+app/android/app/src/main/assets/capacitor.config.json
+app/android/app/src/main/assets/capacitor.plugins.json
+app/android/capacitor-cordova-android-plugins/build/
+worker/.wrangler/
+worker/public/ota/*.zip
+share-preview.png
+
+# ===== ملفات مولّدة من scripts/sync-lib.mjs (بتنعمل بالبناء) =====
+app/www/lib/parser.js
+app/www/lib/rates.js
+app/www/lib/social-icons.js
+app/www/runners/
+app/www/fonts/
+app/www/privacy.html
+
+# ===== محرّرات ونظام =====
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+*.log
+.claude/

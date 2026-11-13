@@ -1,0 +1,115 @@
+# مع كل push على main: اختبارات ← بناء APK موقّع ← GitHub Release فيه sarraf.apk ← تحديث docs/version.json
+# التطبيق بيقرأ version.json من GitHub Pages، وإذا في نسخة أحدث بيعرض "في تحديث جديد" وبينزّلها ويثبّتها.
+name: بناء ونشر صرّاف
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/version.json'
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      # رقم النسخة بيزيد تلقائياً من رقم التشغيل (أكبر من 5 = آخر نسخة يدوية)
+      - name: رقم النسخة
+        run: |
+          echo "VC=$((10 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "VN=3.3.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: اختبارات المحلّل (25 نشرة عيّنة + منطق القناتين)
+        working-directory: worker
+        run: node test/samples.test.mjs
+
+      - name: تجهيز الواجهة واختبارات مهام الخلفية
+        working-directory: app
+        run: |
+          npm ci
+          node scripts/sync-lib.mjs
+          node scripts/test-runner.mjs
+          sed -i "s/APP_VERSION: '[^']*'/APP_VERSION: '${VN}'/" www/config.js
+          npx cap sync android
+
+      # المفتاح من GitHub Secrets (ما بيكون أبداً بالكود)
+      - name: مفتاح التوقيع
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then echo "::error::KEYSTORE_BASE64 مو موجود بالـ Secrets"; exit 1; fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > app/android/keystore.properties
+
+      - name: بناء APK release
+        working-directory: app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon -PversionCode="$VC" -PversionName="$VN"
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/sarraf.apk"
+
+      - name: التأكد من التوقيع
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs sarraf.apk | grep -E "Signer #1 certificate (DN|SHA-256)"
+          rm -f "$RUNNER_TEMP/release.jks" app/android/keystore.properties
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          NOTES="${MSG:-تحديث جديد}"
+          gh release create "v$VN" sarraf.apk --title "صرّاف $VN" --notes "$NOTES" --latest
+
+      - name: تحديث version.json
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+          REPO: ${{ github.repository }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const v = {
+              versionCode: Number(process.env.VC),
+              versionName: process.env.VN,
+              apkUrl: `https://github.com/${process.env.REPO}/releases/download/v${process.env.VN}/sarraf.apk`,
+              notes: (process.env.MSG || "تحديث جديد").trim(),
+              date: new Date().toISOString(),
+            };
+            fs.writeFileSync("docs/version.json", JSON.stringify(v, null, 2) + "\n");
+          '
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/version.json
+          git commit -m "نسخة $VN [skip ci]"
+          git push
