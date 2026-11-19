@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0A1410" />
   <meta name="color-scheme" content="dark" />
   <title>صرّاف</title>
@@ -18,7 +18,7 @@
       <div class="brand">
         <img src="img/logo-symbol.png" alt="" width="32" height="32" />
         <h1>صرّاف</h1>
-        <span id="livePill" class="live" title="حالة التحديث"><i></i><span>مباشر</span></span>
+        <button id="livePill" type="button" class="live press" title="اضغط للتحديث الآن"><i></i><span>محدّث</span></button>
       </div>
       <div class="top-actions">
         <button id="menuBtn" class="icon-btn press" aria-label="القائمة" aria-controls="drawer" aria-expanded="false">
@@ -86,7 +86,11 @@
       <section id="ratesCard" class="card list-card enter">
         <div class="card-head">
           <h2>أسعار السوق</h2>
-          <span class="muted small">شراء · مبيع</span>
+          <div class="rates-cols"><span class="col-b">شراء</span><span class="sep">·</span><span class="col-s">مبيع</span></div>
+        </div>
+        <div id="freshStrip" class="fresh-strip" hidden>
+          <span id="freshDot" class="f-dot"></span>
+          <span id="freshText">—</span>
         </div>
         <div id="disagreeNote" class="note" hidden></div>
         <div id="ratesList"></div>
@@ -99,9 +103,10 @@
           <span class="chev" aria-hidden="true">⌄</span>
         </button>
         <div id="timesMore" class="times-more" hidden>
-          <div>آخر نشرة من القناة: <b id="postTime">—</b></div>
-          <div>آخر تحديث: <b id="fetchTime">—</b></div>
+          <div>وقت النشرة الفعلي: <b id="postTime">—</b></div>
+          <div>آخر جلب على جهازك: <b id="fetchTime">—</b></div>
           <div id="sourceLine"></div>
+          <div id="sourcesCompare" class="sources-cmp"></div>
           <div class="muted small">عملات الحوالات محسوبة من السعر العالمي × دولار السوق، مو من القناة.</div>
         </div>
         <button id="shareBtn" class="ghost press share-btn">
@@ -113,8 +118,10 @@
       <!-- ===== الذهب ===== -->
       <section id="goldCard" class="card gold-card enter" hidden>
         <div class="card-head">
-          <h2>الذهب <span id="goldEst" class="tag" hidden>سعر تقديري</span></h2>
+          <h2>الذهب <span id="goldKindTag" class="tag">محلي</span></h2>
+          <span id="goldAgeTag" class="muted small">—</span>
         </div>
+        <div id="goldFreshNote" class="note" hidden></div>
         <div id="goldCur" class="seg small-seg gold-seg" role="radiogroup" aria-label="عملة سعر الذهب">
           <button data-cur="USD" class="press" role="radio">$ دولار</button>
           <button data-cur="TRY" class="press" role="radio">₺ تركي</button>
@@ -130,7 +137,7 @@
               <button data-dir="m2g" class="press" role="radio">مبلغ ← غرامات</button>
             </div>
           </div>
-          <div class="calc-row">
+          <div class="calc-row" id="gcRow">
             <input id="gcGrams" class="calc-in num-font" type="text" inputmode="decimal" autocomplete="off" value="1" aria-label="عدد الغرامات" />
             <div id="gcKarat" class="seg small-seg" role="radiogroup" aria-label="العيار"></div>
           </div>
@@ -175,9 +182,17 @@
         </div>
       </section>
 
+      <section id="weeklyVideoCard" class="card video-card" hidden>
+        <button id="wvClose" class="tip-close" aria-label="إخفاء">×</button>
+        <div class="tip-title wv-head">🎬 فيديو الأسبوع · <span>عبد السلام ثلجة</span></div>
+        <h3 id="wvTitle" class="wv-title"></h3>
+        <p id="wvDesc" class="muted small wv-desc" hidden></p>
+        <button id="wvOpen" class="primary small-btn press wv-btn">▶ شاهد الفيديو الآن</button>
+      </section>
+
       <section id="tipCard" class="card tip-card" hidden>
         <button id="tipClose" class="tip-close" aria-label="إخفاء">×</button>
-        <div class="tip-title">🩺 معلومة طبية اليوم</div>
+        <div class="tip-title">🩺 معلومة طبية · <span id="tipAuthor">عبد السلام ثلجة</span></div>
         <p id="tipText"></p>
         <button id="tipVideo" class="ghost small-btn press">▶ شوف الفيديو</button>
       </section>
@@ -196,6 +211,10 @@
     <main>
       <section class="card set-links">
         <button class="set-link press" data-go="order"><span class="ni">↕️</span><span class="sl-t">ترتيب العملات وإخفاؤها</span><span class="chev" aria-hidden="true">‹</span></button>
+        <label class="switch-row" style="margin:4px 8px">
+          <span>عرض المعلومة الطبية وفيديو الأسبوع</span>
+          <input id="tipsEnabled" type="checkbox" checked />
+        </label>
       </section>
 
       <section id="notifySection" class="card">
@@ -243,7 +262,7 @@
             <button data-dir="below" class="press" role="radio">تحت</button>
           </div>
           <input id="alertValue" class="text-in alert-in num-font" type="text" inputmode="decimal" dir="ltr" placeholder="150" aria-label="السعر بالليرة الجديدة" />
-          <span class="muted small">ل.س</span>
+          <span class="muted small">ل.س جديدة</span>
         </div>
         <label class="switch-row">
           <span>شغّل التنبيه</span>
@@ -335,9 +354,9 @@
 
   <!-- ================= قائمة المشاركة ================= -->
   <div id="shareBackdrop" class="drawer-backdrop" hidden></div>
-  <div id="shareSheet" class="sheet" role="dialog" aria-label="شارك السعر" hidden>
+  <div id="shareSheet" class="sheet" role="dialog" aria-modal="true" aria-label="شارك السعر" hidden>
     <div class="sheet-grip" aria-hidden="true"></div>
-    <h2>شارك السعر</h2>
+    <div class="sheet-head"><h2>شارك السعر</h2><button id="shareClose" class="ub-close" aria-label="إغلاق">×</button></div>
     <p class="muted small">رابط تحميل التطبيق وحسابك مكتوبين على الصورة. النص بينّسخ لحاله، الصقه مع الصورة (إنستغرام وفيسبوك ما بياخدوا النص المرفق).</p>
     <button class="sheet-opt press" data-share="post"><span class="so-ic" aria-hidden="true">🖼️</span><span><b>صورة منشور</b><small>فيسبوك · إنستغرام (4:5)</small></span></button>
     <button class="sheet-opt press" data-share="story"><span class="so-ic" aria-hidden="true">📱</span><span><b>صورة ستوري</b><small>ستوري إنستغرام وفيسبوك · حالة واتساب (9:16)</small></span></button>

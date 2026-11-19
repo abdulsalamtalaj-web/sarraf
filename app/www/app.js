@@ -28,6 +28,7 @@ const LS = {
   chartWhat: 'sarraf.chartWhat', chartDays: 'sarraf.chartDays',
   remote: 'sarraf.remoteConfig', otaReady: 'sarraf.otaReadyBuild', otaPath: 'sarraf.otaPath',
   order: 'sarraf.order', gcDir: 'sarraf.gcDir', change: 'sarraf.change', updSkip: 'sarraf.updSkip',
+  tipsOn: 'sarraf.tipsOn', wvDismissed: 'sarraf.wvDismissed',
 };
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -143,8 +144,8 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmtNum = (v, dec) => v == null || !isFinite(v) ? '—'
-  : new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: dec }).format(v);
+const fmtNum = (v, dec, minDec = 0) => v == null || !isFinite(v) ? '—'
+  : new Intl.NumberFormat('en-US', { minimumFractionDigits: minDec, maximumFractionDigits: dec }).format(v);
 const fmtTime = (iso) => {
   if (!iso) return '—';
   try {
@@ -209,18 +210,22 @@ function toast(msg, ms = 1800) {
   clearTimeout(t._h); t._h = setTimeout(() => { t.hidden = true; }, ms);
 }
 
-// فتح الروابط بالتطبيق الخاص إن كان مثبتاً، وإلا بالمتصفح
+// فتح الروابط الخارجية بعد التحقق من أن البروتوكول آمن (https فقط)
 async function openExternal(url) {
-  if (!url) return;
+  if (!url || !/^https?:\/\//i.test(String(url).trim())) return;
   const L = P('AppLauncher');
   if (L) { try { await L.openUrl({ url }); return; } catch (e) { console.warn(e); } }
   window.open(url, '_blank', 'noopener');
 }
 
 // ================= جلب الأسعار =================
-// الـ Worker أولاً. إذا ردّ، ما منسحب تلغرام مباشرة أبداً.
-// القراءة المباشرة احتياط فقط (Worker مو مضبوط أو ما عم يرد)، وبتصير كل 5 دقايق بدل كل دقيقة.
-function apiUrl() { return (store.get(LS.api) ?? CFG.API_URL ?? '').trim(); }
+function apiUrl() {
+  const configured = (store.get(LS.api) ?? CFG.API_URL ?? '').trim();
+  if (configured) return configured;
+  // في معاينة المتصفح المحلية فقط (dev-server): استخدم /rates المحلي تلقائياً بدل فشل CORS
+  if (!isNative && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) return location.origin + '/rates';
+  return '';
+}
 // القنوات: اختيار المطوّر من الإعدادات المخفية، وإلا الإعدادات عن بعد (/update)، وإلا config.js
 function channels() {
   const c = store.get(LS.channels);
@@ -249,13 +254,51 @@ async function fetchFromWorker(url) {
   return d;
 }
 async function fetchDirect() {
-  const page = async (ch) => (await fetchWithTimeout(`https://t.me/s/${ch}`)).text();
-  const fx = async () => (await (await fetchWithTimeout('https://open.er-api.com/v6/latest/USD')).json()).rates;
-  const ounce = async () => (await (await fetchWithTimeout(CFG.GOLD_API)).json()).price;
+  const page = async (ch) => {
+    const res = await fetchWithTimeout(`https://t.me/s/${encodeURIComponent(ch)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.text();
+  };
+  const fx = async () => {
+    const res = await fetchWithTimeout('https://open.er-api.com/v6/latest/USD');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()).rates;
+  };
+  const ounce = async () => {
+    const res = await fetchWithTimeout(CFG.GOLD_API);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()).price;
+  };
   const last = state.rates?.usd_syp ? { usd_syp: state.rates.usd_syp } : null;
   const d = await buildRates(channels(), page, fx, { fetchGoldOunce: ounce, GOLD_CHANNELS: CFG.GOLD_CHANNELS || '', last });
   if (d.error) { if (d.rejected) throw new SuspectError(d.error, d.rejected, false); throw new Error(d.error); }
   return d;
+}
+
+// مزامنة فورية من الأسعار التي جلبها التطبيق في الخلفية (WorkManager / BackgroundRunner) حتى يفتح التطبيق بأحدث سعر فوراً
+async function syncFromBackground() {
+  const N = P('SarrafNative');
+  if (!N?.getBackgroundRates) return false;
+  try {
+    const res = await N.getBackgroundRates();
+    if (!res?.ratesJson) return false;
+    const bg = JSON.parse(res.ratesJson);
+    if (!bg?.usd_syp) return false;
+    const bgAt = Date.parse(bg.fetched || bg.post_time || '') || 0;
+    const curAt = Date.parse(state.lastOkAt || state.rates?.fetched || '') || 0;
+    if (bgAt > curAt || !state.rates) {
+      if (state.rates && !sameRates(state.rates, bg)) {
+        state.prev = state.rates; store.set(LS.prev, state.prev);
+      }
+      state.rates = bg;
+      state.lastOkAt = bg.fetched || new Date().toISOString();
+      store.set(LS.rates, bg);
+      store.set(LS.okAt, state.lastOkAt);
+      render(false);
+      return true;
+    }
+  } catch (e) { console.warn('bg sync read', e); }
+  return false;
 }
 const sameRates = (a, b) => a && b && RATE_ROWS.every(({ key }) => a[key]?.buy === b[key]?.buy && a[key]?.sell === b[key]?.sell);
 const goldSig = (r) => JSON.stringify([r?.gold?.usd, r?.gold?.syp, r?.usd_syp]);
@@ -323,6 +366,7 @@ function afterNewRates(r) {
   N.updateWidget({
     rows, mode: m, usd: r.usd_syp[m], usdDir: prevUsd ? Math.sign(r.usd_syp[m] - prevUsd) : 0,
     g21: goldSyp(r, '21', m) ?? NaN, goldOn: goldOn(), at: Date.now(),
+    postAt: r.post_time ? Date.parse(r.post_time) || 0 : 0,
   }).catch(() => {});
   if (notifySettings().enabled) N.setMorning({ body: morningText(r) }).catch(() => {});
 }
@@ -454,22 +498,46 @@ function renderRates(animate) {
     dn.hidden = false;
   } else dn.hidden = true;
 
-  $('timesShort').textContent = r.post_time ? `آخر نشرة ${ago(r.post_time)} · تحديث ${state.lastOkAt ? ago(state.lastOkAt) : '—'}` : '—';
+  const srcKindLabel = r.source_kind === 'manual' ? 'معتمد يدوياً' : r.source_kind === 'whatsapp' ? 'واتساب' : 'تلغرام';
+  const postAgeH = r.post_time ? (Date.now() - Date.parse(r.post_time)) / 3600e3 : Infinity;
+  const fs = $('freshStrip');
+  if (fs) {
+    fs.hidden = false;
+    fs.classList.toggle('old', postAgeH >= 4);
+    $('freshText').textContent = r.post_time
+      ? `نشرة العملات: ${ago(r.post_time)} (${fmtTime(r.post_time)}) · ${srcKindLabel}`
+      : `تحديث ${state.lastOkAt ? ago(state.lastOkAt) : '—'} · ${srcKindLabel}`;
+  }
+
+  $('timesShort').textContent = r.post_time ? `التفاصيل والمصادر · آخر جلب ${state.lastOkAt ? ago(state.lastOkAt) : '—'}` : 'التفاصيل والمصادر';
   $('postTime').textContent = r.post_time ? `${fmtTime(r.post_time)} (${ago(r.post_time)})` : '—';
   $('fetchTime').textContent = state.lastOkAt ? `${fmtTime(state.lastOkAt)} (${ago(state.lastOkAt)})` : '—';
   const bits = [];
-  if (r.source) bits.push(`المصدر: t.me/${r.source}`);
+  if (r.source) bits.push(`المصدر المختار: ${r.source_kind === 'telegram' || !r.source_kind ? 't.me/' + r.source : r.source}`);
   if (r.city) bits.push(CITY_AR[r.city] || r.city);
   if (r.confirmed_by) bits.push(`مؤكد من ${r.confirmed_by}`);
-  bits.push(state.via === 'worker' ? 'عبر خادم صرّاف' : 'قراءة مباشرة');
+  bits.push(state.via === 'worker' ? 'عبر خادم صرّاف المركزي' : 'قراءة مباشرة');
   $('sourceLine').textContent = bits.join(' · ');
+  const sc = $('sourcesCompare');
+  if (sc && Array.isArray(r.sources_tried) && r.sources_tried.length) {
+    sc.innerHTML = r.sources_tried.filter((s) => s.kind !== 'api').map((s) => (
+      s.ok
+        ? `<div class="src-pill">✓ <b>${esc(s.channel)}</b> (${s.kind === 'whatsapp' ? 'واتساب' : s.kind === 'manual' ? 'إدارة' : 'تلغرام'}): <span class="pair-mini">${fmtNum(s.usd_syp?.buy, 2)} / ${fmtNum(s.usd_syp?.sell, 2)}</span>${s.post_time ? ` · ${ago(s.post_time)}` : ''}</div>`
+        : `<div class="src-pill bad">✕ ${esc(s.channel)}: ${esc(s.error || 'غير متاح')}</div>`
+    )).join('');
+  } else if (sc) sc.innerHTML = '';
 }
 
 function renderGold(animate) {
   const r = state.rates, g = r?.gold, card = $('goldCard');
   card.hidden = !g || !goldOn();
   if (!g) return;
-  $('goldEst').hidden = !g.estimated;
+  const isLocal = g.is_local ?? !g.estimated;
+  const kindTag = $('goldKindTag');
+  if (kindTag) {
+    kindTag.textContent = isLocal ? 'سعر محلي' : 'تقديري (أونصة × دولار)';
+    kindTag.className = 'tag ' + (isLocal ? 'local' : 'est');
+  }
   document.querySelectorAll('#goldCur [data-cur]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.cur === state.goldCur)));
   const cur = state.goldCur, cfg = GOLD_CURS[cur], pg = state.prevG, m = state.mode;
   const dec = (v) => (cur === 'TRY' && v != null && v < 1000 ? 2 : cfg.dec);
@@ -483,14 +551,28 @@ function renderGold(animate) {
   }).join('');
   fillNums($('goldList'), animate);
   renderGoldCalc(animate);
-  const t = g.post_time || r.fetched;
-  $('goldTime').textContent = t ? `${fmtTime(t)} (${ago(t)})` : '—';
+  // وقت مستقل للذهب: نعرض وقت نشرة الذهب الفعلية (أو وقت الأونصة العالمية)، ولا نخلطه بوقت جلب العملات
+  const gt = g.post_time || g.ounce_time || null;
+  const gAgeH = gt ? (Date.now() - Date.parse(gt)) / 3600e3 : Infinity;
+  const ageTag = $('goldAgeTag');
+  if (ageTag) ageTag.textContent = gt ? (g.post_time ? `نشرة ${ago(gt)}` : `أونصة ${ago(gt)}`) : 'وقت غير محدد';
+  $('goldTime').textContent = gt
+    ? `${fmtTime(gt)} (${ago(gt)})${g.source ? ' · ' + g.source : ''}`
+    : 'غير متوفر';
+  const gNote = $('goldFreshNote');
+  if (gNote) {
+    if (g.post_time && gAgeH >= 12) {
+      gNote.textContent = `⚠️ نشرة الذهب أقدم من نشرة العملات (${ago(g.post_time)}) — تحقّق من التوقيت قبل البيع أو الشراء.`;
+      gNote.hidden = false;
+    } else gNote.hidden = true;
+  }
 }
 
 // حاسبة الذهب: (سعر الغرام + أجرة الصياغة للغرام) × عدد الغرامات
 function renderGoldCalc(animate) {
   const r = state.rates;
   if (!r?.gold) return;
+  $('gcRow')?.classList.toggle('wide', state.gcDir === 'm2g');
   $('gcKarat').innerHTML = ['21', '18', '24'].map((k) => `<button class="press" role="radio" data-k="${k}" aria-checked="${k === state.gcKarat}">عيار ${k}</button>`).join('');
   document.querySelectorAll('#gcDir [data-dir]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.dir === state.gcDir)));
   const input = parseAmount($('gcGrams').value);
@@ -559,21 +641,26 @@ function renderChart() {
 function renderStatus() {
   const b = $('staleBanner'), live = $('livePill');
   const okAge = state.lastOkAt ? (Date.now() - new Date(state.lastOkAt)) / 60000 : Infinity;
+  const postAgeH = state.rates?.post_time ? (Date.now() - Date.parse(state.rates.post_time)) / 3600e3 : Infinity;
   const staleLimit = Math.max(CFG.STALE_MINUTES, (nextDelay() / 60000) * 2);
   let msg = '';
   if (state.suspect) {
     const s = state.suspect[0];
-    msg = `⚠️ القناة نشرت سعر بعيد كتير عن آخر سعر (${fmtNum(s.usd_syp.buy, 2)} / ${fmtNum(s.usd_syp.sell, 2)}). عم ننطر تأكيد، ومعروض آخر سعر موثوق.`;
-  } else if (!state.online && state.rates) msg = `⚠️ ما في اتصال — معروضة آخر أسعار محفوظة (${ago(state.lastOkAt)}). ممكن تكون قديمة.`;
+    msg = `⚠️ المصدر نشر سعر بعيد كتير عن آخر سعر (${fmtNum(s.usd_syp.buy, 2)} / ${fmtNum(s.usd_syp.sell, 2)}). عم ننطر تأكيد، ومعروض آخر سعر موثوق.`;
+  } else if (!state.online && state.rates) msg = `⚠️ بلا إنترنت — معروضة آخر أسعار محفوظة (${ago(state.lastOkAt)}).`;
   else if (!state.online) msg = '⚠️ ما في اتصال بالإنترنت ولا في أسعار محفوظة لسا.';
-  else if (okAge > staleLimit) msg = `⚠️ الأسعار ما تحدّثت ${ago(state.lastOkAt)} — ممكن تكون قديمة.`;
-  else if (state.rates?.post_time && (Date.now() - new Date(state.rates.post_time)) > 24 * 3600e3)
-    msg = `⚠️ آخر نشرة بالقناة ${ago(state.rates.post_time)} — السعر ممكن ما يعكس السوق هلأ.`;
+  else if (state.rates?.stale_fallback) msg = `⚠️ الخادم يعرض آخر نشرة موثوقة محفوظة (${ago(state.rates.post_time || state.lastOkAt)}) بسبب تعذّر المصادر حالياً.`;
+  else if (okAge > staleLimit) msg = `⚠️ الأسعار ما تحدّثت على جهازك ${ago(state.lastOkAt)} — اسحب لتحت للتحديث.`;
+  else if (postAgeH >= 12) msg = `⚠️ متصل، لكن آخر نشرة أسعار منشورة ${ago(state.rates.post_time)} — انتبه لتوقيت النشرة.`;
   b.hidden = !msg;
   b.textContent = msg;
-  const isLive = state.online && okAge <= staleLimit;
-  live.classList.toggle('off', !isLive);
-  live.querySelector('span').textContent = isLive ? 'مباشر' : 'مو متصل';
+
+  // فصل واضح بين "متصل بالإنترنت" وبين "النشرة حديثة"
+  const connected = state.online && okAge <= staleLimit;
+  const bulletinOld = connected && postAgeH >= 4;
+  live.classList.toggle('off', !connected);
+  live.classList.toggle('warn', bulletinOld);
+  live.querySelector('span').textContent = !connected ? 'بلا نت' : bulletinOld ? 'نشرة قديمة' : 'محدّث';
 }
 
 function render(animate = false) { renderTabs(); renderChips(); renderResults(animate); renderRates(animate); renderGold(animate); renderChart(); renderStatus(); }
@@ -608,27 +695,50 @@ function shareHandle() {
   return m ? '@' + m[1] : '';
 }
 const shortLink = (u) => String(u || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
-// النص اللي بينبعت مع الصورة (حسب ملف الإعدادات)
+// النص اللي بينبعت مع الصورة
 function shareCaption() {
   const lines = ['أسعار اليوم من تطبيق صرّاف 📲'];
   const link = downloadLink();
   if (link) lines.push(`حمّله ببلاش: ${link}`);
   const ig = CFG.SHARE_INSTAGRAM_URL || (CFG.SOCIAL || []).find((s) => s.platform === 'instagram')?.url;
-  if (ig) lines.push(`تابعني: ${ig}`);
+  if (ig) lines.push(`إنستغرام: ${ig}`);
+  return lines.join('\n');
+}
+// نشرة نصية كاملة لخيار "نص بس" (واتساب / تلغرام) تتضمن الأسعار المفعّلة والذهب ووقت النشرة
+function shareTextBody(r) {
+  const m = state.mode;
+  const lines = ['📊 أسعار السوق — تطبيق صرّاف'];
+  if (r.post_time) lines.push(`🕒 وقت النشرة: ${fmtTime(r.post_time)}`);
+  lines.push('');
+  for (const id of foreignEnabled(r)) {
+    const p = priceOf(r, id);
+    if (!p) continue;
+    lines.push(`• ${SHORT_NAME[id]}: شراء ${fmtNum(p.buy, 2, 2)} | مبيع ${fmtNum(p.sell, 2, 2)} ل.س`);
+  }
+  const g21 = goldSyp(r, '21', m);
+  if (goldOn() && g21) {
+    const gKind = (r.gold?.is_local ?? !r.gold?.estimated) ? 'محلي' : 'تقديري';
+    lines.push(`• ذهب عيار 21: ${fmtNum(g21, 0)} ل.س (${fmtNum(g21 * RATIO, 0)} قديمة · ${gKind})`);
+  }
+  const link = downloadLink();
+  if (link) { lines.push(''); lines.push(`📲 حمّل صرّاف مجاناً: ${link}`); }
   return lines.join('\n');
 }
 export async function buildShareCanvas(format = 'post') {
   const r = state.rates, m = state.mode;
   const g21 = goldSyp(r, '21', m);
-  // الأسعار المفعّلة بس وبترتيب المستخدم (لحد 4 عملات + الذهب)
   const FAM_COLOR = { usd: '#3B82F6', try: '#EF4444', eur: '#8B5CF6', remit: '#14B8A6', syp: '#1DB954' };
   const rows = foreignEnabled(r).slice(0, 4).map((id) => {
     const c = CURRENCIES.find((x) => x.id === id), p = priceOf(r, id);
-    return { label: c.name, flag: c.flag, color: FAM_COLOR[c.fam], main: `${fmtNum(p.buy, 2)} / ${fmtNum(p.sell, 2)}`, sub: 'شراء / مبيع · ليرة جديدة' };
+    return { label: c.name, flag: c.flag, color: FAM_COLOR[c.fam], main: `${fmtNum(p.buy, 2, 2)} / ${fmtNum(p.sell, 2, 2)}`, sub: 'شراء (يسار) · مبيع (يمين) · ليرة جديدة' };
   });
-  if (goldOn() && g21) rows.push({ label: 'غرام ذهب عيار 21', flag: null, color: '#F5C542', mainColor: '#F5C542', main: fmtNum(g21, 0), sub: `ليرة جديدة · ${fmtNum(g21 * RATIO, 0)} قديمة${r.gold?.estimated ? ' · تقديري' : ''}` });
+  if (goldOn() && g21) {
+    const gKind = (r.gold?.is_local ?? !r.gold?.estimated) ? 'محلي' : 'تقديري';
+    rows.push({ label: 'غرام ذهب عيار 21', flag: null, color: '#F5C542', mainColor: '#F5C542', main: fmtNum(g21, 0), sub: `ليرة جديدة · ${fmtNum(g21 * RATIO, 0)} قديمة · ${gKind}` });
+  }
+  const dateLine = r.post_time ? `نشرة ${fmtTime(r.post_time)}` : damascusDateLine();
   return drawShareImage({
-    rows, format, dateLine: damascusDateLine(), author: (CFG.DEVELOPER || {}).name || '',
+    rows, format, dateLine, author: (CFG.DEVELOPER || {}).name || '',
     handle: shareHandle(), link: shortLink(downloadLink()), note: 'الأسعار تقريبية من السوق الموازية',
   });
 }
@@ -648,9 +758,10 @@ async function shareRates(format) {
   const SH = P('Share'), FS = P('Filesystem');
   try {
     if (format === 'text') {
-      if (SH) await SH.share({ title: 'أسعار اليوم – صرّاف', text: caption, dialogTitle: 'شارك السعر' });
-      else if (navigator.share) await navigator.share({ text: caption });
-      else { await copyText(caption); toast('تم نسخ النص'); }
+      const txt = shareTextBody(r);
+      if (SH) await SH.share({ title: 'أسعار اليوم – صرّاف', text: txt, dialogTitle: 'شارك السعر' });
+      else if (navigator.share) await navigator.share({ text: txt });
+      else { await copyText(txt); toast('تم نسخ نشرة الأسعار ✓'); }
       return;
     }
     const cv = await buildShareCanvas(format);
@@ -709,6 +820,8 @@ async function checkApkUpdate(manual = false) {
   } finally { apkChecking = false; }
 }
 function openUpdModal(v) {
+  waitingInstallPerm = false;
+  apkReady = false;
   $('updVer').textContent = v.versionName || '';
   $('updNotes').textContent = v.notes || 'تحسينات وإصلاحات.';
   $('updProgress').hidden = true;
@@ -735,13 +848,13 @@ async function installDownloaded() {
     $('updMsg').textContent = 'لازم تسمح لصرّاف يثبّت التحديث: بالصفحة اللي رح تنفتح فعّل "السماح من هالمصدر"، وارجع للتطبيق، والتثبيت بيكمّل لحاله.';
     $('updGo').textContent = 'افتح الإعدادات';
     $('updGo').disabled = false;
-    $('updGo').onclick = () => N.openInstallSettings();
   }
 }
 async function startApkUpdate() {
   const N = P('SarrafNative');
   if (!N || !apkInfo) return;
-  if (apkReady) { installDownloaded(); return; }
+  if (waitingInstallPerm) { N.openInstallSettings().catch(() => {}); return; }
+  if (apkReady) { installDownloaded().catch(() => { apkReady = false; toast('أعد المحاولة للتنزيل'); }); return; }
   $('updGo').disabled = true;
   $('updProgress').hidden = false;
   $('updMsg').textContent = 'عم ننزّل التحديث…';
@@ -751,7 +864,7 @@ async function startApkUpdate() {
     $('updPct').textContent = pct != null ? pct + '%' : (p.bytes / 1048576).toFixed(1) + ' MB';
   });
   try {
-    await N.downloadApk({ url: apkInfo.apkUrl });
+    await N.downloadApk({ url: apkInfo.apkUrl, sha256: apkInfo.sha256 || '' });
     apkReady = true;
     $('updMsg').textContent = 'نزل التحديث ✓';
     await installDownloaded();
@@ -968,16 +1081,32 @@ function onVersionTap() {
   } else if (devTaps >= 3) toast(`باقي ${left} ${left === 1 ? 'نقرة' : left === 2 ? 'نقرتين' : 'نقرات'}`, 900);
 }
 
-// ================= معلومة طبية اليوم =================
+// ================= معلومة طبية اليوم + فيديو الأسبوع =================
+let currentWeeklyKey = '';
 async function loadTip() {
-  const card = $('tipCard');
+  const card = $('tipCard'), wvCard = $('weeklyVideoCard');
   card.hidden = true;
-  const hiddenAt = store.get(LS.tipHiddenAt);
-  if (hiddenAt && Date.now() - hiddenAt < 24 * 3600e3) return;
+  if (wvCard) wvCard.hidden = true;
+  if (store.get(LS.tipsOn, true) === false) return;
   const url = contentUrl();
   if (!url) return;
   try {
-    const c = await (await fetchWithTimeout(url, 8000)).json();
+    const c = await (await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + 't=' + Math.floor(Date.now() / 300000), 8000)).json();
+    // 1) بطاقة فيديو الأسبوع القابلة للنقر (تعود للظهور تلقائياً عند تغيير date أو url في tips.json)
+    const wv = c && c.weekly_video;
+    if (wvCard && wv && wv.url && /^https?:\/\//i.test(wv.url)) {
+      currentWeeklyKey = String(wv.date || wv.url);
+      if (store.get(LS.wvDismissed) !== currentWeeklyKey) {
+        $('wvTitle').textContent = wv.title || 'فيديو جديد على قناتي';
+        const desc = $('wvDesc');
+        if (desc) { desc.textContent = wv.desc || ''; desc.hidden = !wv.desc; }
+        $('wvOpen').onclick = () => openExternal(wv.url);
+        wvCard.hidden = false;
+      }
+    }
+    // 2) بطاقة المعلومة الطبية اليومية
+    const hiddenAt = store.get(LS.tipHiddenAt);
+    if (hiddenAt && Date.now() - hiddenAt < 24 * 3600e3) return;
     const tips = (c.tips || []).filter((t) => t && t.text);
     if (!tips.length) return;
     const day = Math.floor((Date.now() + 3 * 3600e3) / 86400e3);
@@ -986,7 +1115,7 @@ async function loadTip() {
     $('tipVideo').hidden = !tip.video;
     $('tipVideo').onclick = () => openExternal(tip.video);
     card.hidden = false;
-  } catch { /* بدون نت أو بدون محتوى: البطاقة لا تظهر */ }
+  } catch { /* بدون نت أو بدون محتوى: البطاقات لا تظهر */ }
 }
 
 // ================= الإشعار الصباحي + تنبيه السعر =================
@@ -1030,7 +1159,7 @@ async function pushRunnerSettings() {
       enabled: n.enabled, time: n.times[0], times: n.times, apiUrl: apiUrl(), channels: channels(),
       goldChannels: CFG.GOLD_CHANNELS || '', goldApi: CFG.GOLD_API, contentUrl: contentUrl(),
       goldCur: state.goldCur, oldPerNew: RATIO, mode: state.mode, alert: alertSettings(),
-      change: changeSettings(), order: enabledIds(),
+      change: changeSettings(), order: enabledIds(), bgRefresh: true,
     });
   } catch (e) { console.warn('runner configure', e); }
 }
@@ -1106,6 +1235,7 @@ function describeNext(nextAt) {
 }
 async function fillSettings() {
   $('sourceSection').hidden = !store.get(LS.dev);
+  if ($('tipsEnabled')) $('tipsEnabled').checked = store.get(LS.tipsOn, true) !== false;
   $('apiUrl').value = apiUrl();
   $('channels').value = channels().join(', ');
   const n = notifySettings();
@@ -1334,8 +1464,14 @@ function init() {
   });
   $('goldCur').addEventListener('click', (e) => {
     const b = e.target.closest('[data-cur]'); if (!b) return;
+    if (b.dataset.cur === state.goldCur) return;
     state.goldCur = b.dataset.cur; store.set(LS.goldCur, state.goldCur);
-    renderGold(true); // تدحرج من قيمة العملة السابقة للجديدة
+    if ($('gcFee').value) {
+      $('gcFee').value = '';
+      store.set(LS.gcFee, '');
+      toast('تم تصفير أجرة الصياغة لتغيير العملة');
+    }
+    renderGold(true);
     pushRunnerSettings();
     if (state.rates && notifySettings().enabled) P('SarrafNative')?.setMorning({ body: morningText(state.rates) }).catch(() => {});
   });
@@ -1367,6 +1503,17 @@ function init() {
   });
   $('shareBtn').addEventListener('click', openShareSheet);
   $('shareBackdrop').addEventListener('click', closeShareSheet);
+  $('shareClose')?.addEventListener('click', closeShareSheet);
+  $('livePill')?.addEventListener('click', () => { toast('عم نحدّث الأسعار…', 1000); refresh({ manual: true }); });
+  $('tipsEnabled')?.addEventListener('change', (e) => {
+    store.set(LS.tipsOn, e.target.checked);
+    if (e.target.checked) { store.set(LS.tipHiddenAt, 0); store.set(LS.wvDismissed, ''); loadTip(); }
+    else { $('tipCard').hidden = true; if ($('weeklyVideoCard')) $('weeklyVideoCard').hidden = true; }
+  });
+  $('wvClose')?.addEventListener('click', () => {
+    if (currentWeeklyKey) store.set(LS.wvDismissed, currentWeeklyKey);
+    $('weeklyVideoCard').hidden = true;
+  });
   $('shareSheet').addEventListener('click', (e) => { const b = e.target.closest('[data-share]'); if (b) shareRates(b.dataset.share); });
   $('updateClose').addEventListener('click', () => { $('updateBar').hidden = true; });
   $('chartWhat').addEventListener('click', (e) => {
@@ -1465,12 +1612,12 @@ function init() {
   window.addEventListener('online', () => { refresh(); loadTip(); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
+    syncFromBackground();
     if (Date.now() - lastAttemptAt >= nextDelay() - 5000) refresh();
-    if (currentView === 'settings') fillSettings(); // بعد الرجوع من إعدادات البطارية
-    // رجع من صفحة "السماح بالتثبيت": منكمّل التثبيت لحاله
+    if (currentView === 'settings') fillSettings();
     if (waitingInstallPerm && apkReady) { waitingInstallPerm = false; installDownloaded(); }
   });
-  setInterval(() => { renderRates(false); renderGold(false); renderStatus(); }, 30000);
+  setInterval(() => { if (!document.hidden) { renderRates(false); renderGold(false); renderStatus(); } }, 30000);
 
   setupPeople();
   setupOldNew();
@@ -1478,7 +1625,7 @@ function init() {
   setupPullToRefresh();
   setupLongPress();
   render(false);
-  refresh();
+  syncFromBackground().finally(() => refresh());
   loadTip();
   loadRemoteHistory();
   setupNotifyPrompt();

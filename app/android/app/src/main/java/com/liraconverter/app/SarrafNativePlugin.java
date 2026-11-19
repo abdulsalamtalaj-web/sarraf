@@ -3,10 +3,16 @@ package com.liraconverter.app;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
+
+import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.pm.PackageInfoCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -16,11 +22,45 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import org.json.JSONObject;
 
-/** جسر صغير بين واجهة الويب وأندرويد: الويدجت، المنبّه الصباحي الدقيق، حالة توفير البطارية */
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.security.MessageDigest;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** جسر بين واجهة الويب وأندرويد: الويدجت، المزامنة بالخلفية، المنبّه الدقيق، وتحديث الـ APK/OTA */
 @CapacitorPlugin(name = "SarrafNative")
 public class SarrafNativePlugin extends Plugin {
 
-    /** {rows:[{key,label,value}], usd, usdDir, g21, goldOn, mode, at} → الويدجتات (بترتيب المستخدم) */
+    private static final AtomicBoolean APK_DOWNLOADING = new AtomicBoolean(false);
+    private static final Set<String> ALLOWED_APK_HOSTS = new HashSet<>(Arrays.asList(
+        "github.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com"
+    ));
+
+    private static File apkFile(Context c) {
+        return new File(new File(c.getFilesDir(), "updates"), "sarraf.apk");
+    }
+
+    /** إرجاع أحدث أسعار تم جلبها في الخلفية (سواء عبر WorkManager أو BackgroundRunner) ليفتح التطبيق بأحدث سعر فوراً */
+    @PluginMethod
+    public void getBackgroundRates(PluginCall call) {
+        Context c = getContext();
+        JSONObject r = SarrafData.runnerJson(c, "lastRates");
+        JSObject out = new JSObject();
+        out.put("ratesJson", r != null ? r.toString() : null);
+        call.resolve(out);
+    }
+
+    /** {rows:[{key,label,value}], usd, usdDir, g21, goldOn, mode, at, postAt} → الويدجتات */
     @PluginMethod
     public void updateWidget(PluginCall call) {
         Context c = getContext();
@@ -79,6 +119,7 @@ public class SarrafNativePlugin extends Plugin {
         r.put("ignoringBattery", ignoring);
         r.put("backgroundRestricted", restricted);
         r.put("exact", MorningAlarm.canExact(c));
+        r.put("notificationsEnabled", NotificationManagerCompat.from(c).areNotificationsEnabled());
         r.put("sdk", Build.VERSION.SDK_INT);
         r.put("manufacturer", Build.MANUFACTURER);
         long next = MorningAlarm.nextTrigger(c, System.currentTimeMillis());
@@ -88,17 +129,42 @@ public class SarrafNativePlugin extends Plugin {
 
     // ================= تحديث الـ APK من جوا التطبيق =================
 
-    /** {url} → تنزيل الـ APK مع حدث تقدّم "apkProgress" {pct}. يرجع {path, versionCode} */
+    private static byte[] certDigest(PackageInfo info) throws Exception {
+        if (info == null) return null;
+        Signature[] sigs = null;
+        if (Build.VERSION.SDK_INT >= 28 && info.signingInfo != null) {
+            sigs = info.signingInfo.hasMultipleSigners()
+                ? info.signingInfo.getApkContentsSigners()
+                : info.signingInfo.getSigningCertificateHistory();
+        } else {
+            sigs = info.signatures;
+        }
+        if (sigs == null || sigs.length == 0) return null;
+        return MessageDigest.getInstance("SHA-256").digest(sigs[0].toByteArray());
+    }
+
+    /** {url, sha256?} → تنزيل الـ APK مع التحقق من النطاق وSHA-256 وشهادة التوقيع */
     @PluginMethod
     public void downloadApk(PluginCall call) {
-        final String url = call.getString("url");
-        if (url == null || !url.startsWith("https://")) { call.reject("رابط غير صالح"); return; }
+        final String urlStr = call.getString("url");
+        final String expectedSha = call.getString("sha256");
+        if (urlStr == null || !urlStr.startsWith("https://")) { call.reject("رابط غير صالح"); return; }
+        try {
+            String host = new URL(urlStr).getHost().toLowerCase(java.util.Locale.US);
+            if (!ALLOWED_APK_HOSTS.contains(host)) { call.reject("مصدر التحديث غير موثوق"); return; }
+        } catch (Exception e) { call.reject("رابط غير صالح"); return; }
+        if (!APK_DOWNLOADING.compareAndSet(false, true)) { call.reject("التنزيل جارٍ بالفعل"); return; }
+
         new Thread(() -> {
-            java.io.File dir = new java.io.File(getContext().getCacheDir(), "updates");
-            java.io.File out = new java.io.File(dir, "sarraf.apk");
+            Context c = getContext();
+            File out = apkFile(c);
+            File dir = out.getParentFile();
+            File tmp = new File(dir, "sarraf.apk.tmp");
+            HttpURLConnection con = null;
             try {
-                dir.mkdirs();
-                java.net.HttpURLConnection con = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                if (dir != null) dir.mkdirs();
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                con = (HttpURLConnection) new URL(urlStr).openConnection();
                 con.setInstanceFollowRedirects(true);
                 con.setConnectTimeout(15000);
                 con.setReadTimeout(30000);
@@ -106,12 +172,13 @@ public class SarrafNativePlugin extends Plugin {
                 if (code != 200) throw new Exception("HTTP " + code);
                 long total = con.getContentLengthLong(), got = 0;
                 int lastPct = -1;
-                try (java.io.InputStream in = new java.io.BufferedInputStream(con.getInputStream());
-                     java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+                try (InputStream in = new BufferedInputStream(con.getInputStream());
+                     OutputStream os = new FileOutputStream(tmp)) {
                     byte[] buf = new byte[32768];
                     int n;
                     while ((n = in.read(buf)) > 0) {
                         os.write(buf, 0, n);
+                        md.update(buf, 0, n);
                         got += n;
                         if (got > 80L * 1024 * 1024) throw new Exception("الملف أكبر من المتوقع");
                         int pct = total > 0 ? (int) (got * 100 / total) : -1;
@@ -123,29 +190,45 @@ public class SarrafNativePlugin extends Plugin {
                             notifyListeners("apkProgress", p);
                         }
                     }
-                } finally { con.disconnect(); }
-                // تحقق: نفس الحزمة ورقم نسخة أحدث (ما منثبّت ملف غريب)
-                android.content.pm.PackageManager pm = getContext().getPackageManager();
-                android.content.pm.PackageInfo info = pm.getPackageArchiveInfo(out.getAbsolutePath(), 0);
-                if (info == null || !getContext().getPackageName().equals(info.packageName)) { out.delete(); throw new Exception("الملف مو تطبيق صرّاف"); }
-                long cur = pm.getPackageInfo(getContext().getPackageName(), 0).versionCode;
-                if (info.versionCode <= cur) { out.delete(); throw new Exception("النسخة المنزّلة مو أحدث من الموجودة"); }
+                }
+                if (expectedSha != null && !expectedSha.trim().isEmpty()) {
+                    String gotSha = Ota.hex(md.digest());
+                    if (!gotSha.equalsIgnoreCase(expectedSha.trim())) throw new Exception("بصمة الملف غير مطابقة");
+                }
+                // تحقق: نفس الحزمة، رقم نسخة أحدث، ونفس شهادة التوقيع
+                PackageManager pm = c.getPackageManager();
+                int sigFlag = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
+                PackageInfo info = pm.getPackageArchiveInfo(tmp.getAbsolutePath(), sigFlag);
+                if (info == null || !c.getPackageName().equals(info.packageName)) throw new Exception("الملف مو تطبيق صرّاف");
+                PackageInfo curInfo = pm.getPackageInfo(c.getPackageName(), sigFlag);
+                long curVc = PackageInfoCompat.getLongVersionCode(curInfo);
+                long newVc = PackageInfoCompat.getLongVersionCode(info);
+                if (newVc <= curVc) throw new Exception("النسخة المنزّلة مو أحدث من الموجودة");
+                byte[] curCert = certDigest(curInfo), newCert = certDigest(info);
+                if (curCert != null && newCert != null && !Arrays.equals(curCert, newCert)) {
+                    throw new Exception("توقيع الملف غير مطابق لتطبيق صرّاف");
+                }
+                if (out.exists()) out.delete();
+                if (!tmp.renameTo(out)) throw new Exception("تعذّر حفظ ملف التحديث");
                 JSObject r = new JSObject();
                 r.put("path", out.getAbsolutePath());
-                r.put("versionCode", info.versionCode);
+                r.put("versionCode", newVc);
                 call.resolve(r);
             } catch (Exception e) {
-                out.delete();
+                tmp.delete();
                 call.reject(String.valueOf(e.getMessage()));
+            } finally {
+                if (con != null) con.disconnect();
+                APK_DOWNLOADING.set(false);
             }
         }).start();
     }
 
-    /** فتح شاشة التثبيت للملف المنزّل. يرجع {needPermission:true} إذا لازم "تثبيت تطبيقات غير معروفة" */
+    /** فتح شاشة التثبيت للملف المنزّل */
     @PluginMethod
     public void installApk(PluginCall call) {
         Context c = getContext();
-        java.io.File f = new java.io.File(new java.io.File(c.getCacheDir(), "updates"), "sarraf.apk");
+        File f = apkFile(c);
         JSObject r = new JSObject();
         if (!f.exists()) { call.reject("ما في ملف منزّل"); return; }
         if (Build.VERSION.SDK_INT >= 26 && !c.getPackageManager().canRequestPackageInstalls()) {
@@ -164,7 +247,6 @@ public class SarrafNativePlugin extends Plugin {
         } catch (Exception e) { call.reject(e.getMessage()); }
     }
 
-    /** أندرويد 8+: صفحة "السماح بالتثبيت من هالمصدر" لتطبيق صرّاف */
     @PluginMethod
     public void openInstallSettings(PluginCall call) {
         if (Build.VERSION.SDK_INT >= 26) {
@@ -174,13 +256,12 @@ public class SarrafNativePlugin extends Plugin {
 
     // ================= التحديث الهوائي (OTA) =================
 
-    /** {url, sha256, build} → تنزيل الحزمة والتحقق منها وفك ضغطها. يرجع {path} */
     @PluginMethod
     public void otaDownload(PluginCall call) {
         final String url = call.getString("url");
         final String sha = call.getString("sha256");
         final int build = call.getInt("build", 0);
-        if (url == null || sha == null || build <= 0) { call.reject("بيانات ناقصة"); return; }
+        if (url == null || !url.startsWith("https://") || sha == null || build <= 0) { call.reject("بيانات ناقصة أو غير آمنة"); return; }
         if (Ota.isBad(getContext(), build)) { call.reject("الحزمة معلّمة كمعطوبة"); return; }
         new Thread(() -> {
             try {
@@ -192,7 +273,6 @@ public class SarrafNativePlugin extends Plugin {
         }).start();
     }
 
-    /** {path, build, now} → تفعيل الحزمة. now=true بيعيد تحميل الواجهة فوراً */
     @PluginMethod
     public void otaApply(PluginCall call) {
         String path = call.getString("path");
@@ -205,7 +285,6 @@ public class SarrafNativePlugin extends Plugin {
         if (now) getBridge().setServerBasePath(path);
     }
 
-    /** الواجهة اشتغلت تمام: تثبيت الحزمة الحالية */
     @PluginMethod
     public void otaReady(PluginCall call) {
         JSObject r = new JSObject();
@@ -213,7 +292,6 @@ public class SarrafNativePlugin extends Plugin {
         call.resolve(r);
     }
 
-    /** {build: الحزمة الحالية، bad: الحزم المعطوبة، versionCode: رقم الـ APK} */
     @PluginMethod
     public void otaInfo(PluginCall call) {
         Context c = getContext();
@@ -223,12 +301,11 @@ public class SarrafNativePlugin extends Plugin {
         r.put("active", act != null && !act.isEmpty());
         r.put("bad", Ota.badList(c).toString());
         try {
-            r.put("versionCode", c.getPackageManager().getPackageInfo(c.getPackageName(), 0).versionCode);
+            r.put("versionCode", PackageInfoCompat.getLongVersionCode(c.getPackageManager().getPackageInfo(c.getPackageName(), 0)));
         } catch (Exception e) { r.put("versionCode", 0); }
         call.resolve(r);
     }
 
-    /** رجوع للواجهة المدمجة بالـ APK */
     @PluginMethod
     public void otaReset(PluginCall call) {
         Ota.reset(getContext());
@@ -236,20 +313,17 @@ public class SarrafNativePlugin extends Plugin {
         getBridge().setServerAssetPath("public");
     }
 
-    /** صفحة التطبيق بالإعدادات (منها: البطارية ← بدون قيود) */
     @PluginMethod
     public void openAppSettings(PluginCall call) {
         Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getContext().getPackageName()));
         start(i, call);
     }
 
-    /** قائمة "تحسين البطارية" بالنظام */
     @PluginMethod
     public void openBatterySettings(PluginCall call) {
         start(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), call);
     }
 
-    /** أندرويد 12+: صلاحية "المنبّهات والتذكيرات" */
     @PluginMethod
     public void openExactAlarmSettings(PluginCall call) {
         if (Build.VERSION.SDK_INT >= 31) {

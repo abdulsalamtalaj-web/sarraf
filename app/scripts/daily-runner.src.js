@@ -54,13 +54,27 @@ async function getRates(s) {
   if (s.apiUrl) {
     try {
       const res = await fetch(s.apiUrl);
-      const d = await res.json();
-      if (d && d.usd_syp) return d;
+      if (res.ok) {
+        const d = await res.json();
+        if (d && d.usd_syp) return d;
+      }
     } catch (e) { /* ننتقل للقراءة المباشرة */ }
   }
-  const page = async (ch) => (await fetch('https://t.me/s/' + ch)).text();
-  const fx = async () => (await (await fetch('https://open.er-api.com/v6/latest/USD')).json()).rates;
-  const ounce = async () => (await (await fetch(s.goldApi || 'https://api.gold-api.com/price/XAU')).json()).price;
+  const page = async (ch) => {
+    const res = await fetch('https://t.me/s/' + encodeURIComponent(ch));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.text();
+  };
+  const fx = async () => {
+    const res = await fetch('https://open.er-api.com/v6/latest/USD');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return (await res.json()).rates;
+  };
+  const ounce = async () => {
+    const res = await fetch(s.goldApi || 'https://api.gold-api.com/price/XAU');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return (await res.json()).price;
+  };
   const last = kvGet('lastRates');
   const d = await buildRates(s.channels || ['exchange_Currencyy'], page, fx, {
     fetchGoldOunce: ounce, GOLD_CHANNELS: s.goldChannels || '', last: last ? { usd_syp: last.usd_syp } : null,
@@ -221,7 +235,8 @@ addEventListener('dailyCheck', async (resolve, reject) => {
     const needAlert = s.alert && s.alert.enabled && age >= CHECK_EVERY_MIN && kvGet('alertFired') !== s.alert.dir + ':' + s.alert.value;
     const needChange = s.change && s.change.enabled && age >= CHECK_EVERY_MIN;
     const needWidget = kvGet('widgetOn') === true && age >= WIDGET_EVERY_MIN;
-    if (!needMorning && !needAlert && !needChange && !needWidget) return resolve();
+    const needBgKeepFresh = s.bgRefresh === true && age >= WIDGET_EVERY_MIN; // تحديث تلقائي بالخلفية للتطبيق حتى بدون ويدجت
+    if (!needMorning && !needAlert && !needChange && !needWidget && !needBgKeepFresh) return resolve();
 
     const { r, stale } = await fresh(s);
     if (needMorning) await prepareMorning(s, r, stale, slot.key);

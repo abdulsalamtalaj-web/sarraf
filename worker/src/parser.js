@@ -8,8 +8,8 @@ const ENTITIES = {
 
 export function decodeEntities(s) {
   return s
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&#(\d+);/g, (_, n) => { const cp = +n; return cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : ''; })
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => { const cp = parseInt(n, 16); return cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : ''; })
     .replace(/&[a-z]+;/gi, (e) => (e.toLowerCase() in ENTITIES ? ENTITIES[e.toLowerCase()] : e));
 }
 
@@ -208,16 +208,51 @@ function round(v) {
   return v == null ? v : Math.round(v * 10000) / 10000;
 }
 
-// الليرة القديمة → الجديدة بالقسمة على 100، وقلب TRY/USD إن جاء معكوساً
+// الليرة القديمة → الجديدة بالقسمة على 100، وتصحيح صيغة 3 منازل عشرية (146.500 → 146.5)، وقلب TRY/USD إن جاء معكوساً
 export function fixUnits(r) {
   const o = { ...r };
-  if (o.usd_syp && o.usd_syp.buy > 2000) o.usd_syp = scale(o.usd_syp, 0.01);
-  if (o.eur_syp && o.eur_syp.buy > 2500) o.eur_syp = scale(o.eur_syp, 0.01);
+  if (o.usd_syp) {
+    if (o.usd_syp.buy > 50000 && o.usd_syp.buy / 1000 >= 30 && o.usd_syp.sell / 1000 <= 500) o.usd_syp = scale(o.usd_syp, 0.001);
+    else if (o.usd_syp.buy > 2000) o.usd_syp = scale(o.usd_syp, 0.01);
+  }
+  if (o.eur_syp) {
+    if (o.eur_syp.buy > 50000 && o.eur_syp.buy / 1000 >= 30 && o.eur_syp.sell / 1000 <= 600) o.eur_syp = scale(o.eur_syp, 0.001);
+    else if (o.eur_syp.buy > 2500) o.eur_syp = scale(o.eur_syp, 0.01);
+  }
   if (o.try_syp && o.try_syp.buy > 80) o.try_syp = scale(o.try_syp, 0.01);
   if (o.try_usd && o.try_usd.buy < 1) {
     o.try_usd = { buy: round(1 / o.try_usd.sell), sell: round(1 / o.try_usd.buy) };
   }
   return o;
+}
+
+// تحليل نشرة منظّمة (مثل صيغة واتساب/الإدارة: المدينة / العملة / شراء / مبيع / وحدة التسعير / وقت النشرة)
+export function parseStructuredBulletin(text) {
+  const t = normalizeDigits(text || '');
+  if (!/العملة\s*:|وحدة\s*التسعير\s*:/.test(t)) return null;
+  const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
+  let city = null, pair = 'usd_syp', buy = null, sell = null, oldUnit = false, postTime = null;
+  for (const line of lines) {
+    const m = line.match(/^([^:：]+)[:：]\s*(.+)$/);
+    if (!m) continue;
+    const k = m[1].trim(), v = m[2].trim();
+    if (/المدينة|المحافظة/.test(k)) { city = detectCity(v) || city; continue; }
+    if (/العملة/.test(k)) { const p = detectPair(v); if (p) pair = p; continue; }
+    if (/شراء/i.test(k)) { const n = parseNumber(v); if (n != null) buy = n; continue; }
+    if (/مبيع|بيع/i.test(k)) { const n = parseNumber(v); if (n != null) sell = n; continue; }
+    if (/وحدة/i.test(k)) { oldUnit = /قديم/i.test(v); continue; }
+    if (/وقت|تاريخ/i.test(k)) {
+      const ts = Date.parse(v);
+      if (Number.isFinite(ts)) postTime = new Date(ts).toISOString();
+    }
+  }
+  if (buy == null || sell == null || buy > sell) return null;
+  if (oldUnit && buy > 200) { buy = round(buy / 100); sell = round(sell / 100); }
+  const r = fixUnits(validPairs({ [pair]: { buy, sell } }));
+  if (!r[pair] || !inRange(pair, r[pair])) return null;
+  if (city) r.city = city;
+  if (postTime) r.post_time = postTime;
+  return r;
 }
 
 // أحدث نشرة صالحة في الصفحة، ومعها النشرة التي قبلها (للتأكيد الذاتي)

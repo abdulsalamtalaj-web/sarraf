@@ -14,6 +14,7 @@ public class MorningReceiver extends BroadcastReceiver {
         }
         // MORNING أو BOOT_COMPLETED أو MY_PACKAGE_REPLACED أو تغيّر صلاحية المنبّهات الدقيقة
         MorningAlarm.schedule(context);
+        RatesSyncWorker.ensureScheduled(context);
         RatesWidget.updateAll(context);
     }
 }

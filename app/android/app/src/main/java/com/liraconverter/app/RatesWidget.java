@@ -32,6 +32,8 @@ public class RatesWidget extends AppWidgetProvider {
     }
 
     static void render(Context c, AppWidgetManager m, int[] ids) {
+        // نؤكد وجود الويدجت دائماً حتى لو أُعيد ضبط تخزين الـ runner
+        SarrafData.runner(c).edit().putString("widgetOn", "true").apply();
         SarrafData.Snapshot s = SarrafData.latest(c);
         for (int id : ids) {
             RemoteViews v = new RemoteViews(c.getPackageName(), R.layout.widget_rates);
@@ -50,7 +52,7 @@ public class RatesWidget extends AppWidgetProvider {
             boolean gold = s == null || s.goldOn;
             v.setViewVisibility(R.id.w_rowg, gold ? View.VISIBLE : View.GONE);
             v.setTextViewText(R.id.w_gold, s == null ? "—" : SarrafData.fmt(s.g21, 0));
-            v.setTextViewText(R.id.w_time, s == null ? "افتح التطبيق مرة" : "تحديث " + SarrafData.timeOf(s.at));
+            v.setTextViewText(R.id.w_time, SarrafData.widgetTimeLabel(s, false));
             PendingIntent pi = openApp(c, 7001);
             if (pi != null) v.setOnClickPendingIntent(R.id.w_root, pi);
             m.updateAppWidget(id, v);

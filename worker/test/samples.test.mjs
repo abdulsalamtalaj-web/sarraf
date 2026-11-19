@@ -1,7 +1,7 @@
 // اختبارات المحلّل على نشرات عيّنة بصيغ مختلفة (بدون إنترنت)
 // التشغيل: node test/samples.test.mjs
 import assert from 'node:assert/strict';
-import { parseBulletin, parseNumber, parseChannelPage } from '../src/parser.js';
+import { parseBulletin, parseNumber, parseChannelPage, parseStructuredBulletin } from '../src/parser.js';
 import { buildRates } from '../src/rates.js';
 
 let passed = 0, failed = 0;
@@ -166,6 +166,42 @@ await checkAsync('أحدث نشرة مع النشرة السابقة', async () 
   const p = parseChannelPage(page(['2026-11-13T06:00:00Z', usdMsg(145, 146)], ['2026-11-13T07:00:00Z', 'خبر'], ['2026-11-13T08:00:00Z', usdMsg(146, 147)]));
   assert.deepEqual(p.usd_syp, { buy: 146, sell: 147 });
   assert.deepEqual(p.previous.usd_syp, { buy: 145, sell: 146 });
+});
+await checkAsync('إصلاح 3 منازل عشرية بالليرة الجديدة (146.500 → 146.5 لا 1465)', async () => {
+  const r = parseBulletin('الدولار\nشراء 146.500\nمبيع 147.000');
+  assert.deepEqual(r.usd_syp, { buy: 146.5, sell: 147 });
+});
+await checkAsync('النشرة المنظّمة من واتساب (المدينة/العملة/شراء/مبيع/وحدة التسعير)', async () => {
+  const r = parseStructuredBulletin('المدينة: حلب\nالعملة: دولار\nشراء: 149.5\nمبيع: 150.5\nوحدة التسعير: ليرة جديدة\nوقت النشرة: 2026-11-19T12:00:00Z');
+  assert.equal(r.city, 'aleppo');
+  assert.deepEqual(r.usd_syp, { buy: 149.5, sell: 150.5 });
+  assert.equal(r.post_time, '2026-11-19T12:00:00.000Z');
+});
+await checkAsync('اختيار المصدر حسب الحداثة: القناة الاحتياطية الأحدث تتقدّم على الأساسية الأقدم', async () => {
+  const pages = {
+    a: page(['2026-11-13T01:00:00Z', usdMsg(145, 146)]),
+    b: page(['2026-11-13T07:00:00Z', usdMsg(147, 148)]),
+  };
+  const r = await buildRates(['a', 'b'], async (c) => pages[c], fx, { fetchGoldOunce: noGold });
+  assert.equal(r.source, 'b');
+  assert.deepEqual(r.usd_syp, { buy: 147, sell: 148 });
+});
+await checkAsync('التبديل التلقائي بين تلغرام وواتساب عند تعطل أحدهما + تمييز الذهب المحلي والتقديري', async () => {
+  const r = await buildRates(['down_ch'], async () => { throw new Error('tg down'); }, fx, {
+    fetchGoldOunce: noGold,
+    extraSources: [{
+      channel: 'whatsapp-sarraf',
+      kind: 'whatsapp',
+      ok: true,
+      data: { usd_syp: { buy: 149, sell: 150 }, post_time: '2026-11-19T10:00:00Z' },
+      gold: { syp: { '21': 15500 }, post_time: '2026-11-19T09:30:00Z', source: 'whatsapp-sarraf', kind: 'whatsapp' },
+    }],
+  });
+  assert.equal(r.source, 'whatsapp-sarraf');
+  assert.equal(r.source_kind, 'whatsapp');
+  assert.equal(r.gold.is_local, true);
+  assert.equal(r.gold.estimated, false);
+  assert.equal(r.gold.post_time, '2026-11-19T09:30:00Z');
 });
 
 console.log(`\n${failed ? '✗' : '✓'} ${passed} نجح، ${failed} فشل (منها ${S.length} نشرة عيّنة)`);

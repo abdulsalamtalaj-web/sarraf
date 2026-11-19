@@ -40,7 +40,7 @@ export function intToWords(num) {
   const parts = [];
   for (const [v, one, two, pl] of groups) {
     const c = Math.floor(num / v);
-    if (c) { parts.push(scaleWords(c % 1000 === c ? c : c, one, two, pl)); num %= v; }
+    if (c) { parts.push(scaleWords(Math.min(c, 999), one, two, pl)); num %= v; }
   }
   if (num) parts.push(below1000(num));
   return parts.join(' و');
@@ -49,8 +49,9 @@ export function intToWords(num) {
 // المبلغ بالكلمات مع اسم العملة والقروش (للليرة الجديدة)
 export function amountToWords(value, unit, subunit = 'قرش') {
   if (!isFinite(value) || value <= 0) return '';
-  const int = Math.floor(value + 1e-9);
-  const frac = Math.round((value - int) * 100);
+  let int = Math.floor(value + 1e-9);
+  let frac = Math.round((value - int) * 100);
+  if (frac >= 100) { int += 1; frac = 0; }
   let s = int ? `${intToWords(int)} ${unit}` : '';
   if (frac && subunit) s += `${s ? ' و' : ''}${intToWords(frac)} ${subunit}`;
   return s;

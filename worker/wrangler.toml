@@ -13,9 +13,9 @@ type = "Text"
 globs = ["**/*.html"]
 fallthrough = true
 
-# لقطة أسعار كل ساعة (لمسار /history)
+# تحديث الأسعار بالخلفية كل 15 دقيقة + لقطة ساعية لمسار /history (ضمن الحصة المجانية تماماً: ~120 كتابة/يوم من أصل 1000)
 [triggers]
-crons = ["0 * * * *"]
+crons = ["*/15 * * * *"]
 
 # مخزن السجل (KV). أنشئه بالأمر:  npx wrangler kv namespace create HISTORY
 # ثم ضع الـ id الذي يظهر لك مكان القيمة أدناه.

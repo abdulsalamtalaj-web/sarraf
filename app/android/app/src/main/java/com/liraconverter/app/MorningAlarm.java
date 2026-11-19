@@ -52,13 +52,14 @@ public final class MorningAlarm {
             try {
                 String[] hm = t.split(":");
                 int h = Integer.parseInt(hm[0].trim()), min = hm.length > 1 ? Integer.parseInt(hm[1].trim()) : 0;
+                if (h < 0 || h > 23 || min < 0 || min > 59) continue;
                 Calendar cal = Calendar.getInstance(SarrafData.DAMASCUS);
                 cal.setTimeInMillis(now);
                 cal.set(Calendar.HOUR_OF_DAY, h);
                 cal.set(Calendar.MINUTE, min);
                 cal.set(Calendar.SECOND, 0);
                 cal.set(Calendar.MILLISECOND, 0);
-                if (cal.getTimeInMillis() <= now + 1000) cal.add(Calendar.DAY_OF_MONTH, 1);
+                if (cal.getTimeInMillis() <= now + 5000) cal.add(Calendar.DAY_OF_MONTH, 1);
                 long at = cal.getTimeInMillis();
                 if (best < 0 || at < best) best = at;
             } catch (Exception ignored) { }
@@ -74,8 +75,12 @@ public final class MorningAlarm {
         if (am == null) return -1;
         am.cancel(pi);
         if (at < 0) return -1;
-        if (canExact(c)) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
-        else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi); // بدون صلاحية exact: قد يتأخر دقائق
+        if (canExact(c)) {
+            try { am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi); }
+            catch (SecurityException e) { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi); }
+        } else {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+        }
         return at;
     }
 

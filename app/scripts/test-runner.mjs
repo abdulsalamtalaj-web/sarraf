@@ -114,6 +114,14 @@ const ok = (name) => { n++; console.log('  ✓', name); };
   assert.ok(e.fetches > 0 && e.kvJ('lastRates').usd_syp.buy === 146);
   ok('في ويدجت: بيحدّث lastRates بالخلفية');
 }
+// التحديث التلقائي بالخلفية للتطبيق حتى بدون ويدجت
+{
+  const e = makeEnv({ nowIso: '2026-11-13T10:00:00Z' });
+  await e.fire('configure', { channels: ['a'], bgRefresh: true });
+  await e.fire('dailyCheck');
+  assert.ok(e.fetches > 0 && e.kvJ('lastRates').usd_syp.buy === 146);
+  ok('bgRefresh=true: يحدّث الأسعار بالخلفية تلقائياً حتى بدون ويدجت');
+}
 // زر التجربة
 {
   const e = makeEnv({ nowIso: '2026-11-13T10:00:00Z' });

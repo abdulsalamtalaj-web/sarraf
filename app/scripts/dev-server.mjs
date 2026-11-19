@@ -18,6 +18,10 @@ createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
     return res.end(await readFile(join(www, '..', '..', 'worker', 'content.json')));
   }
+  if (url.pathname === '/update') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+    return res.end(JSON.stringify({}));
+  }
   if (url.pathname === '/__save' && req.method === 'POST') {
     // للمعاينة فقط: حفظ صورة المشاركة المولّدة لفحصها
     let b = ''; req.on('data', (c) => (b += c)); req.on('end', async () => {

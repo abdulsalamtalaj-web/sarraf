@@ -2,6 +2,7 @@ package com.liraconverter.app;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -16,15 +17,13 @@ import java.util.Locale;
 import java.util.TimeZone;
 
 /**
- * مصدر البيانات المشترك بين الويدجت والإشعار الصباحي.
- * - "sarraf_native": ما يكتبه التطبيق (العملات المفعّلة بترتيب المستخدم + آخر أسعار + نص الإشعار)
- * - "com.liraconverter.app.daily": مخزن الـ Background Runner (CapacitorKV) — آخر أسعار جلبها بالخلفية
- * نأخذ الأرقام من الأحدث، والترتيب والأسماء دائماً من التطبيق.
+ * مصدر البيانات المشترك بين الويدجت والإشعار الصباحي والمزامنة بالخلفية.
  */
 public final class SarrafData {
+    private static final String TAG = "SarrafData";
     public static final String PREFS = "sarraf_native";
     public static final String RUNNER_PREFS = "com.liraconverter.app.daily";
-    // سوريا على UTC+3 طوال السنة (بدون توقيت صيفي منذ 2022) — إزاحة ثابتة بدل قاعدة tz القديمة ببعض الأجهزة
+    // سوريا على UTC+3 طوال السنة (بدون توقيت صيفي منذ 2022)
     public static final TimeZone DAMASCUS = TimeZone.getTimeZone("GMT+03:00");
 
     private SarrafData() {}
@@ -32,7 +31,6 @@ public final class SarrafData {
     public static SharedPreferences prefs(Context c) { return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE); }
     public static SharedPreferences runner(Context c) { return c.getSharedPreferences(RUNNER_PREFS, Context.MODE_PRIVATE); }
 
-    /** قيمة KV من الـ runner مخزنة كنص JSON */
     public static JSONObject runnerJson(Context c, String key) {
         try {
             String s = runner(c).getString(key, null);
@@ -47,13 +45,28 @@ public final class SarrafData {
         } catch (Exception e) { return null; }
     }
 
+    /** تحليل ISO-8601 بدقة مع احترام فروق التوقيت (+03:00 / +00:00 / Z) */
     public static long parseIso(String iso) {
-        if (iso == null) return 0;
+        if (iso == null || iso.length() < 19) return 0;
         try {
+            String base = iso.substring(0, 19);
+            String tail = iso.substring(19).replaceAll("^\\.\\d+", "");
             SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US);
+            if (tail.isEmpty() || tail.equals("Z")) {
+                f.setTimeZone(TimeZone.getTimeZone("UTC"));
+                return f.parse(base).getTime();
+            }
+            if (tail.matches("^[+-]\\d{2}:?\\d{2}$")) {
+                String tz = tail.contains(":") ? tail : tail.substring(0, 3) + ":" + tail.substring(3);
+                f.setTimeZone(TimeZone.getTimeZone("GMT" + tz));
+                return f.parse(base).getTime();
+            }
             f.setTimeZone(TimeZone.getTimeZone("UTC"));
-            return f.parse(iso.substring(0, 19)).getTime();
-        } catch (Exception e) { return 0; }
+            return f.parse(base).getTime();
+        } catch (Exception e) {
+            Log.w(TAG, "parseIso failed: " + iso, e);
+            return 0;
+        }
     }
 
     public static class Row {
@@ -61,14 +74,14 @@ public final class SarrafData {
         public double value = Double.NaN;
     }
 
-    /** ملخص للويدجت */
     public static class Snapshot {
         public List<Row> rows = new ArrayList<>();
-        public double usd = Double.NaN;  // الدولار بالليرة الجديدة (حسب الشراء/المبيع المختار)
-        public int usdDir = 0;            // 1 طلوع، -1 نزول، 0 ثابت
+        public double usd = Double.NaN;
+        public int usdDir = 0;
         public double g21 = Double.NaN;
         public boolean goldOn = true;
-        public long at = 0;
+        public long at = 0;      // وقت الجلب
+        public long postAt = 0;  // وقت النشرة الفعلي
     }
 
     static double pick(JSONObject pair, String mode) {
@@ -76,7 +89,6 @@ public final class SarrafData {
         return pair.optDouble(mode, pair.optDouble("buy", Double.NaN));
     }
 
-    /** قيمة مفتاح (usd_syp / try_syp / eur_syp / sar_syp ...) من نتيجة الأسعار */
     static double valueOf(JSONObject r, String key, String mode) {
         JSONObject p = r.optJSONObject(key);
         if (p == null) {
@@ -95,6 +107,7 @@ public final class SarrafData {
         if (w != null) {
             mode = w.optString("mode", "buy");
             s.at = w.optLong("at", 0);
+            s.postAt = w.optLong("postAt", 0);
             s.usd = w.optDouble("usd", Double.NaN);
             s.usdDir = w.optInt("usdDir", 0);
             s.g21 = w.optDouble("g21", Double.NaN);
@@ -110,17 +123,18 @@ public final class SarrafData {
                 s.rows.add(row);
             }
         } else {
-            // التطبيق ما كتب شي بعد: الدولار بس
             Row row = new Row();
             row.key = "usd_syp"; row.label = "الدولار";
             s.rows.add(row);
         }
-        // أسعار الخلفية أحدث؟ منحدّث الأرقام ومنحافظ على ترتيب التطبيق
         if (r != null) {
             long rAt = parseIso(r.optString("fetched", null));
+            long rPost = parseIso(r.optString("post_time", null));
             if (rAt > s.at) {
                 double newUsd = valueOf(r, "usd_syp", mode);
-                if (!Double.isNaN(newUsd) && !Double.isNaN(s.usd)) s.usdDir = Double.compare(newUsd, s.usd);
+                JSONObject prevBg = appJson(c, "prevBgUsd");
+                double refUsd = prevBg != null ? pick(prevBg, mode) : s.usd;
+                if (!Double.isNaN(newUsd) && !Double.isNaN(refUsd)) s.usdDir = Double.compare(newUsd, refUsd);
                 if (!Double.isNaN(newUsd)) s.usd = newUsd;
                 for (Row row : s.rows) {
                     double v = valueOf(r, row.key, mode);
@@ -134,6 +148,7 @@ public final class SarrafData {
                     else if (gusd != null && gusd.has("21") && !Double.isNaN(s.usd)) s.g21 = gusd.optDouble("21") * s.usd;
                 }
                 s.at = rAt;
+                if (rPost > 0) s.postAt = rPost;
             }
         }
         return s;
@@ -150,5 +165,15 @@ public final class SarrafData {
         SimpleDateFormat f = new SimpleDateFormat("h:mm", Locale.US);
         f.setTimeZone(DAMASCUS);
         return f.format(new Date(ms));
+    }
+
+    /** نص قصير لعمر النشرة بالويدجت (يفصل النشرة القديمة عن الحديثة) */
+    public static String widgetTimeLabel(Snapshot s, boolean compact) {
+        if (s == null) return compact ? "" : "افتح التطبيق مرة";
+        long ref = s.postAt > 0 ? s.postAt : s.at;
+        if (ref <= 0) return "—";
+        long ageH = (System.currentTimeMillis() - ref) / 3600_000L;
+        if (ageH >= 12) return compact ? ("قديم " + ageH + "س") : ("نشرة قديمة · " + timeOf(ref));
+        return compact ? timeOf(ref) : ((s.postAt > 0 ? "نشرة " : "تحديث ") + timeOf(ref));
     }
 }

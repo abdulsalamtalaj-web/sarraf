@@ -109,20 +109,24 @@ export async function drawShareImage({ rows, dateLine, logo = 'img/logo.png', au
         labelRight = x + w - 72 - 2 * fr;
       }
     }
-    text(ctx, r.label, labelRight, y + 82 * k, { font: `700 ${Math.round(38 * Math.max(k, 0.8))}px ${AR}`, color: C.ink2 });
-    // الرقم الكبير (من اليسار لليمين)
-    text(ctx, r.main, x + 48, y + h - 62 * k, { font: `700 ${Math.round(74 * Math.max(k, 0.7))}px ${NUM}`, color: r.mainColor || C.ink, align: 'left', dir: 'ltr' });
-    if (r.sub && k > 0.8) text(ctx, r.sub, x + w - 48, y + h - 34 * k, { font: `400 28px ${AR}`, color: C.ink3 });
+    text(ctx, r.label, labelRight, y + Math.round(54 * Math.max(k, 0.72)), { font: `700 ${Math.round(38 * Math.max(k, 0.78))}px ${AR}`, color: C.ink2 });
+    // الرقم الكبير (من اليسار لليمين) — مضبوط ليتسع للبطاقة دائماً
+    const mainFont = fit(ctx, r.main, w * 0.56, Math.round(70 * Math.max(k, 0.65)), 700, NUM);
+    text(ctx, r.main, x + 44, y + Math.round(h * 0.62), { font: mainFont, color: r.mainColor || C.ink, align: 'left', dir: 'ltr' });
+    // إظهار السطر الفرعي دائماً (شراء / مبيع · ليرة جديدة) حتى مع 5 صفوف
+    if (r.sub) {
+      const subPx = Math.max(20, Math.round(26 * Math.max(k, 0.78)));
+      text(ctx, r.sub, x + w - 48, y + h - Math.max(18, Math.round(26 * k)), { font: `400 ${subPx}px ${AR}`, color: C.ink3 });
+    }
     y += h + gap;
   }
 
-  // شريط: "تابعني على إنستغرام @… • حمّل صرّاف مجاناً: الرابط" (مكتوب على الصورة لأن إنستغرام وفيسبوك بيرموا النص المرفق)
+  // شريط: صياغة محايدة تشجّع على إعادة المشاركة على حالات واتساب وإنستغرام
   const ctaH = 108;
   ctx.fillStyle = 'rgba(245,197,66,.12)'; rr(ctx, x, L.ctaY, w, ctaH, 28); ctx.fill();
-  // ‎⁦…⁩ بيعزل الحساب والرابط كنص من اليسار لليمين (وإلا الـ @ بتطلع بالطرف الغلط)
   const ltr = (s) => '⁦' + s + '⁩';
-  const line1 = handle ? `تابعني على إنستغرام ${ltr(handle)}` : '📲 تطبيق صرّاف';
-  const line2 = link ? `حمّل صرّاف مجاناً: ${ltr(link)}` : 'حمّل صرّاف مجاناً';
+  const line1 = handle ? `من تطبيق صرّاف المجاني · ${ltr(handle)}` : '📲 من تطبيق صرّاف المجاني';
+  const line2 = link ? `حمّله مجاناً: ${ltr(link)}` : 'حمّله مجاناً';
   text(ctx, line1, W / 2, L.ctaY + 46, { font: fit(ctx, line1, w - 72, 34, 700, AR), color: C.gold, align: 'center' });
   text(ctx, line2, W / 2, L.ctaY + 88, { font: fit(ctx, line2, w - 72, 30, 500, AR), color: C.ink, align: 'center' });
 

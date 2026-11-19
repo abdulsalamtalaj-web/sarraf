@@ -11,6 +11,7 @@ import android.widget.RemoteViews;
 public class RatesWidgetSmall extends AppWidgetProvider {
 
     static void render(Context c, AppWidgetManager m, int[] ids) {
+        SarrafData.runner(c).edit().putString("widgetOn", "true").apply();
         SarrafData.Snapshot s = SarrafData.latest(c);
         for (int id : ids) {
             RemoteViews v = new RemoteViews(c.getPackageName(), R.layout.widget_small);
@@ -18,7 +19,7 @@ public class RatesWidgetSmall extends AppWidgetProvider {
             String arrow = s == null ? "" : s.usdDir > 0 ? "▲" : s.usdDir < 0 ? "▼" : "";
             v.setTextViewText(R.id.ws_arrow, arrow);
             v.setTextColor(R.id.ws_arrow, s != null && s.usdDir < 0 ? 0xFFF87171 : 0xFF22C55E);
-            v.setTextViewText(R.id.ws_time, s == null ? "" : SarrafData.timeOf(s.at));
+            v.setTextViewText(R.id.ws_time, SarrafData.widgetTimeLabel(s, true));
             PendingIntent pi = RatesWidget.openApp(c, 7002);
             if (pi != null) v.setOnClickPendingIntent(R.id.ws_root, pi);
             m.updateAppWidget(id, v);

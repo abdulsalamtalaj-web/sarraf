@@ -11,6 +11,7 @@ export const DEFAULTS = {
 export const JUMP_LIMIT = 0.10;      // رفض أي قفزة أكبر من 10% عن آخر سعر محفوظ...
 export const CONFIRM_LIMIT = 0.02;   // ...إلا إذا أكدها مصدر آخر بفرق أقل من 2%
 export const DISAGREE_LIMIT = 0.02;  // فرق أكبر من 2% بين القناتين = تنبيه "المصادر مختلفة"
+export const FRESH_ADVANTAGE_MS = 15 * 60 * 1000; // المصدر الأحدث بأكثر من 15 دقيقة يتقدّم على الأقدم
 // عملات الحوالات: محسوبة من السعر العالمي × دولار السوق
 export const REMIT = ['SAR', 'AED', 'KWD', 'JOD'];
 const OZ_GRAMS = 31.1034768;
@@ -19,6 +20,7 @@ export const list = (s) => (Array.isArray(s) ? s : String(s || '').split(',')).m
 const r4 = (v) => (v == null || !isFinite(v) ? null : Math.round(v * 10000) / 10000);
 const mid = (p) => (p ? (p.buy + p.sell) / 2 : null);
 const diff = (a, b) => Math.abs(a - b) / b;
+const tsOf = (iso) => { const n = iso ? Date.parse(iso) : NaN; return Number.isFinite(n) ? n : 0; };
 
 async function defaultFetchText(url) {
   const res = await fetch(url, {
@@ -29,7 +31,7 @@ async function defaultFetchText(url) {
   return res.text();
 }
 
-// opts: { GOLD_CHANNELS, GOLD_API, FX_API, fetchGoldOunce(), last: {usd_syp:{buy,sell}} }
+// opts: { GOLD_CHANNELS, GOLD_API, FX_API, fetchGoldOunce(), last: {usd_syp:{buy,sell}}, extraSources: [] }
 // الدوال قابلة للحقن ليستخدم التطبيق نفس الكود مباشرة (بدون Worker)
 export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
   const cfg = { ...DEFAULTS, ...opts };
@@ -42,7 +44,9 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
   });
   const fetchGoldOunce = opts.fetchGoldOunce || (async () => {
     const d = JSON.parse(await defaultFetchText(cfg.GOLD_API));
-    return d.price;
+    const p = Number(d?.price);
+    if (!Number.isFinite(p) || p < 500 || p > 20000) throw new Error('gold-api bad price');
+    return p;
   });
 
   // كل صفحة تُجلب مرة واحدة فقط حتى لو استُخدمت للعملات والذهب
@@ -52,27 +56,64 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
     return pages.get(ch);
   };
 
-  // 1) كل القنوات مع بعض (بالتوازي)
+  // 1) كل القنوات + المصادر الإضافية (واتساب / اعتماد يدوي) مع بعض
   const fxP = Promise.resolve().then(fetchFx).catch((e) => ({ __error: String(e.message || e) }));
-  const results = await Promise.all(channels.map(async (ch) => {
+  const tgResults = await Promise.all(channels.map(async (ch, idx) => {
     try {
       const parsed = parseChannelPage(await getPage(ch));
-      return parsed ? { channel: ch, ok: true, data: parsed } : { channel: ch, ok: false, error: 'لا توجد نشرة نصية' };
+      return parsed
+        ? { channel: ch, kind: 'telegram', priority: idx + 10, ok: true, data: parsed }
+        : { channel: ch, kind: 'telegram', priority: idx + 10, ok: false, error: 'لا توجد نشرة نصية' };
     } catch (e) {
-      return { channel: ch, ok: false, error: String(e.message || e) };
+      return { channel: ch, kind: 'telegram', priority: idx + 10, ok: false, error: String(e.message || e) };
     }
   }));
-  const tried = results.map(({ channel, ok, error }) => (ok ? { channel, ok } : { channel, ok, error }));
-  const good = results.filter((r) => r.ok);
+
+  const extra = Array.isArray(opts.extraSources) ? opts.extraSources : [];
+  const extraResults = extra.map((src, idx) => {
+    if (src && src.ok && src.data?.usd_syp) {
+      return {
+        channel: src.channel || src.source || 'whatsapp',
+        kind: src.kind || 'whatsapp',
+        priority: Number.isFinite(src.priority) ? src.priority : (src.kind === 'manual' ? -100 : idx),
+        ok: true,
+        data: src.data,
+      };
+    }
+    return {
+      channel: src?.channel || 'whatsapp',
+      kind: src?.kind || 'whatsapp',
+      priority: 100 + idx,
+      ok: false,
+      error: src?.error || 'المصدر غير متاح',
+    };
+  });
+
+  const results = [...extraResults, ...tgResults];
+  const tried = results.map(({ channel, kind, ok, error, data }) => (
+    ok
+      ? { channel, kind, ok, post_time: data.post_time || null, usd_syp: data.usd_syp }
+      : { channel, kind, ok, error }
+  ));
+
+  // ترتيب حسب الأولوية والحداثة: الاعتماد اليدوي أولاً، وإلا الأحدث بأكثر من 15 دقيقة يتقدّم على الأقدم
+  const good = results.filter((r) => r.ok).sort((a, b) => {
+    if (a.kind === 'manual' && b.kind !== 'manual') return -1;
+    if (b.kind === 'manual' && a.kind !== 'manual') return 1;
+    const ta = tsOf(a.data.post_time), tb = tsOf(b.data.post_time);
+    if (ta && tb && Math.abs(ta - tb) > FRESH_ADVANTAGE_MS) return tb - ta;
+    if (ta && !tb) return -1;
+    if (tb && !ta) return 1;
+    return a.priority - b.priority;
+  });
   if (!good.length) return { error: 'تعذر الحصول على الأسعار من كل القنوات', sources_tried: tried };
 
-  // 2) فحص القفزة: أكثر من 10% عن آخر سعر محفوظ مرفوض إلا إذا أكده مصدر آخر
+  // 2) فحص القفزة: أكثر من 10% عن آخر سعر محفوظ مرفوض إلا إذا أكده مصدر آخر (أو اعتماد يدوي)
   const lastMid = mid(opts.last?.usd_syp);
   const confirmedBy = (cand) => {
     const m = mid(cand.data.usd_syp);
     const other = good.find((o) => o !== cand && diff(mid(o.data.usd_syp), m) <= CONFIRM_LIMIT);
     if (other) return other.channel;
-    // تأكيد ذاتي: النشرة السابقة بنفس القناة تقول نفس الشي (حتى لا يعلق التطبيق إذا قناة وحدة شغالة)
     const prev = cand.data.previous?.usd_syp;
     if (prev && diff(mid(prev), m) <= CONFIRM_LIMIT) return cand.channel + ' (نشرتين متتاليتين)';
     return null;
@@ -80,28 +121,37 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
   const rejected = [];
   let pick = null;
   for (const cand of good) {
+    if (cand.kind === 'manual') { pick = cand; break; }
     const m = mid(cand.data.usd_syp);
     if (lastMid && diff(m, lastMid) > JUMP_LIMIT) {
       const by = confirmedBy(cand);
-      if (!by) { rejected.push({ channel: cand.channel, usd_syp: cand.data.usd_syp, reason: 'قفزة أكبر من 10% بدون تأكيد' }); continue; }
+      if (!by) {
+        rejected.push({
+          channel: cand.channel,
+          kind: cand.kind,
+          usd_syp: cand.data.usd_syp,
+          post_time: cand.data.post_time || null,
+          reason: 'قفزة أكبر من 10% بدون تأكيد',
+        });
+        continue;
+      }
       cand.confirmed_by = by;
     }
     pick = cand; break;
   }
   if (!pick) return { error: 'السعر الجديد مشبوه (قفزة كبيرة بدون تأكيد)', rejected, sources_tried: tried };
 
-  // 3) مقارنة المصادر
+  // 3) مقارنة المصادر الصالحة
   let disagree = null;
   if (good.length > 1) {
-    const values = good.map((g) => ({ channel: g.channel, usd_syp: g.data.usd_syp, post_time: g.data.post_time }));
+    const values = good.map((g) => ({ channel: g.channel, kind: g.kind, usd_syp: g.data.usd_syp, post_time: g.data.post_time || null }));
     const mids = values.map((v) => mid(v.usd_syp));
     const spread = (Math.max(...mids) - Math.min(...mids)) / Math.min(...mids);
     if (spread > DISAGREE_LIMIT) disagree = { spread: r4(spread), values };
   }
 
-  const { previous, ...data } = { ...pick.data, source: pick.channel };
+  const { previous, ...data } = { ...pick.data, source: pick.channel, source_kind: pick.kind };
   const derived = [];
-  // التركي مقابل الدولار: من النشرة، وإلا من (الدولار/السوري) ÷ (التركي/السوري)، وإلا من API عالمي
   if (!data.try_usd && data.try_syp) {
     data.try_usd = {
       buy: r4(data.usd_syp.buy / data.try_syp.sell),
@@ -110,7 +160,7 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
     derived.push('try_usd');
   }
   let fx = await fxP;
-  if (fx && fx.__error) { tried.push({ channel: 'fx-api', ok: false, error: fx.__error }); fx = null; }
+  if (fx && fx.__error) { tried.push({ channel: 'fx-api', kind: 'api', ok: false, error: fx.__error }); fx = null; }
   if (fx) {
     if (!data.try_usd && fx.TRY) { data.try_usd = { buy: r4(fx.TRY), sell: r4(fx.TRY) }; derived.push('try_usd'); }
     if (!data.try_syp && data.try_usd) {
@@ -128,7 +178,9 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
     if (fx && fx[c]) remit[c.toLowerCase() + '_syp'] = { buy: r4(data.usd_syp.buy / fx[c]), sell: r4(data.usd_syp.sell / fx[c]), per_usd: fx[c] };
   }
 
-  const gold = await buildGold(data, list(cfg.GOLD_CHANNELS).length ? list(cfg.GOLD_CHANNELS) : channels, getPage, fetchGoldOunce, tried);
+  const goldChannels = list(cfg.GOLD_CHANNELS).length ? list(cfg.GOLD_CHANNELS) : channels;
+  const extraGold = extra.filter((s) => s?.ok && s.gold).map((s) => ({ ...s.gold, source: s.channel || s.source || 'whatsapp', kind: s.kind || 'whatsapp' }));
+  const gold = await buildGold(data, goldChannels, getPage, fetchGoldOunce, tried, extraGold);
 
   return {
     usd_syp: data.usd_syp,
@@ -138,9 +190,10 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
     remit: Object.keys(remit).length ? remit : null,
     gold,
     city: data.city || null,
-    post_time: data.post_time,
-    post_id: data.post_id,
+    post_time: data.post_time || null,
+    post_id: data.post_id || null,
     source: data.source,
+    source_kind: data.source_kind || 'telegram',
     confirmed_by: pick.confirmed_by || null,
     disagree,
     rejected: rejected.length ? rejected : null,
@@ -150,36 +203,66 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
   };
 }
 
-// الذهب: سعر محلي بالليرة إن نشرته القناة، وإلا تقديري من الأونصة العالمية × سعر الدولار بالسوق
-async function buildGold(data, channels, getPage, fetchGoldOunce, tried) {
-  let g = null;
-  for (const ch of channels) {
+// الذهب: يختار أحدث نشرة محلية/ذهب متاحة، مع وقت مستقل واضح وتمييز المحلي عن التقديري
+async function buildGold(data, channels, getPage, fetchGoldOunce, tried, extraGold = []) {
+  const tgGold = (await Promise.all(channels.map(async (ch) => {
     try {
       const parsed = parseGoldPage(await getPage(ch));
-      if (parsed) { g = { ...parsed, source: ch }; break; }
-    } catch { /* القناة غير متاحة */ }
-  }
+      return parsed ? { ...parsed, source: ch, kind: 'telegram' } : null;
+    } catch { return null; }
+  }))).filter(Boolean);
+
+  const candidates = [...extraGold, ...tgGold];
+  const hasLocalSyp = (c) => !!(c?.syp?.['21'] || c?.gram?.['21']?.cur === 'syp');
+  candidates.sort((a, b) => {
+    if (a.kind === 'manual' && b.kind !== 'manual') return -1;
+    if (b.kind === 'manual' && a.kind !== 'manual') return 1;
+    const al = hasLocalSyp(a), bl = hasLocalSyp(b);
+    const ta = tsOf(a.post_time), tb = tsOf(b.post_time);
+    if (al !== bl) {
+      // المحلي يتقدّم ما لم يكن أقدم بأكثر من 24 ساعة من مصدر آخر
+      if (al && (!tb || ta >= tb - 24 * 3600e3)) return -1;
+      if (bl && (!ta || tb >= ta - 24 * 3600e3)) return 1;
+    }
+    return tb - ta;
+  });
+
+  const g = candidates[0] || null;
   let ounce = g?.ounce_usd || null;
   if (!ounce && g?.gram?.['24']?.cur === 'usd') ounce = g.gram['24'].value * OZ_GRAMS;
   let ounceSource = g?.ounce_usd ? g.source : null;
+  let ounceTime = g?.ounce_usd ? (g.post_time || null) : null;
   if (!ounce) {
-    try { ounce = await fetchGoldOunce(); ounceSource = 'gold-api'; } catch (e) {
-      tried.push({ channel: 'gold-api', ok: false, error: String(e.message || e) });
+    try {
+      const p = await fetchGoldOunce();
+      if (Number.isFinite(p) && p >= 500 && p <= 20000) {
+        ounce = p;
+        ounceSource = 'gold-api';
+        ounceTime = new Date().toISOString();
+      }
+    } catch (e) {
+      tried.push({ channel: 'gold-api', kind: 'api', ok: false, error: String(e.message || e) });
     }
   }
 
   const usdSell = data.usd_syp.sell;
-  // أسعار محلية بالليرة (إن وُجدت) مع تحويل الليرة القديمة للجديدة
   const localSyp = (item) => {
     if (!item || item.cur !== 'syp') return null;
     let v = item.value;
-    if (v / usdSell > 2000) v = v / 100; // الغرام لا يتجاوز 2000$؛ إذن الرقم بالليرة القديمة
+    if (v / usdSell > 2000) v = v / 100;
     return r4(v);
   };
   const syp = {};
-  for (const k of ['24', '21', '18']) { const v = localSyp(g?.gram?.[k]); if (v) syp[k] = v; }
-  const lira = localSyp(g?.lira);
-  if (lira) syp.lira = lira;
+  if (g?.syp) {
+    for (const k of ['24', '21', '18', 'lira']) if (Number.isFinite(g.syp[k]) && g.syp[k] > 0) syp[k] = r4(g.syp[k]);
+  }
+  for (const k of ['24', '21', '18']) {
+    if (!syp[k]) { const v = localSyp(g?.gram?.[k]); if (v) syp[k] = v; }
+  }
+  if (!syp.lira) {
+    const lira = localSyp(g?.lira);
+    if (lira) syp.lira = lira;
+  }
 
   const usd = {};
   const g24 = ounce ? ounce / OZ_GRAMS : null;
@@ -190,12 +273,16 @@ async function buildGold(data, channels, getPage, fetchGoldOunce, tried) {
   if (!syp.lira && syp['21']) syp.lira = r4(syp['21'] * 8);
 
   if (!ounce && !Object.keys(syp).length) return null;
+  const isLocal = !!syp['21'];
   return {
     ounce_usd: r4(ounce),
-    usd,                 // سعر الغرام (والليرة الذهب) بالدولار
-    syp: Object.keys(syp).length ? syp : null, // أسعار محلية بالليرة الجديدة إن نشرتها القناة
-    estimated: !syp['21'],
+    usd,
+    syp: Object.keys(syp).length ? syp : null,
+    is_local: isLocal,
+    estimated: !isLocal,
     post_time: g?.post_time || null,
+    ounce_time: ounceTime,
     source: g?.source || ounceSource,
+    source_kind: g?.kind || (ounceSource === 'gold-api' ? 'api' : 'telegram'),
   };
 }

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>لوحة إدارة صرّاف</title>
+<style>
+  :root {
+    --bg: #0A1410; --card: #12201A; --card2: #18291F; --ink: #EEF4F0;
+    --ink2: rgba(238,244,240,.82); --ink3: rgba(238,244,240,.58);
+    --gold: #F5C542; --ok: #22C55E; --warn: #FBBF24; --bad: #F87171;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 system-ui, "Segoe UI", Tahoma, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
+  h1 { margin: 0; font-size: 22px; color: var(--gold); }
+  h2 { margin: 0 0 10px; font-size: 16px; color: var(--ink2); }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .card { background: var(--card); border-radius: 16px; padding: 16px; border: 1px solid rgba(238,244,240,.06); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 13px; color: var(--ink3); margin: 8px 0 4px; }
+  input, textarea, select { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid rgba(238,244,240,.12); border-radius: 10px; padding: 10px 12px; font: inherit; }
+  textarea { min-height: 110px; resize: vertical; }
+  button { font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 10px 16px; cursor: pointer; min-height: 42px; }
+  .pri { background: var(--gold); color: #1d1606; }
+  .ok { background: var(--ok); color: #052e16; }
+  .bad { background: rgba(248,113,113,.16); color: var(--bad); }
+  .gh { background: rgba(238,244,240,.08); color: var(--ink); }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .pill.ok { background: rgba(34,197,94,.16); color: var(--ok); }
+  .pill.bad { background: rgba(248,113,113,.16); color: var(--bad); }
+  .pill.warn { background: rgba(251,191,36,.16); color: var(--warn); }
+  .item { background: var(--bg); border-radius: 12px; padding: 12px; margin-top: 8px; display: grid; gap: 6px; }
+  .muted { color: var(--ink3); font-size: 13px; }
+  .num { font-family: ui-monospace, Consolas, monospace; direction: ltr; unicode-bidi: isolate; }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--card2); color: var(--ink); padding: 10px 18px; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: none; z-index: 90; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <h1>⚙️ لوحة إدارة صرّاف</h1>
+    <div class="row" id="topBtns" hidden>
+      <button class="gh" id="btnRefresh">🔄 تحديث المصادر الآن</button>
+      <button class="bad" id="btnLogout">خروج</button>
+    </div>
+  </div>
+
+  <section class="card" id="loginBox">
+    <h2>تسجيل الدخول</h2>
+    <p class="muted">أدخل رمز الإدارة (<code>ADMIN_TOKEN</code> المخزّن كسرّ في Cloudflare Worker).</p>
+    <input id="tok" type="password" dir="ltr" placeholder="ADMIN_TOKEN" />
+    <div class="row" style="margin-top:10px">
+      <button class="pri" id="btnLogin">دخول</button>
+    </div>
+  </section>
+
+  <div id="dash" hidden style="display:grid;gap:16px">
+    <section class="card">
+      <h2>النشرة المعروضة حالياً للمستخدمين</h2>
+      <div id="curSummary" class="item muted">جاري التحميل…</div>
+    </section>
+
+    <section class="card">
+      <h2>1) لصق نشرة من واتساب / تلغرام واعتمادها</h2>
+      <p class="muted">الصق أي نشرة أسعار (أو الصيغة الثابتة: المدينة / العملة / شراء / مبيع / وحدة التسعير)، افحص الأرقام المستخرجة ثم اضغط «اعتماد ونشر».</p>
+      <textarea id="pasteText" placeholder="مثال:&#10;الدولار الأمريكي&#10;شراء: 149.5&#10;مبيع: 150.5&#10;الليرة التركية&#10;شراء: 2.95&#10;مبيع: 3.08"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="gh" id="btnPreview">🔍 فحص الأرقام</button>
+        <button class="ok" id="btnPublishText">✓ اعتماد ونشر النشرة</button>
+      </div>
+      <div id="previewBox" class="item" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>2) النشرات المعلّقة والمرفوضة (قفزات &gt;10% أو رسائل واتساب)</h2>
+      <div id="pendingList" class="muted">لا توجد نشرات معلّقة.</div>
+    </section>
+
+    <section class="card">
+      <h2>3) تصحيح سعر يدوي مباشر</h2>
+      <div class="grid2">
+        <div><label>دولار شراء (ليرة جديدة)</label><input id="ovUsdB" class="num" type="text" inputmode="decimal" placeholder="149.5" /></div>
+        <div><label>دولار مبيع (ليرة جديدة)</label><input id="ovUsdS" class="num" type="text" inputmode="decimal" placeholder="150.5" /></div>
+        <div><label>تركي شراء (اختياري)</label><input id="ovTryB" class="num" type="text" inputmode="decimal" /></div>
+        <div><label>تركي مبيع (اختياري)</label><input id="ovTryS" class="num" type="text" inputmode="decimal" /></div>
+        <div><label>يورو شراء (اختياري)</label><input id="ovEurB" class="num" type="text" inputmode="decimal" /></div>
+        <div><label>يورو مبيع (اختياري)</label><input id="ovEurS" class="num" type="text" inputmode="decimal" /></div>
+        <div><label>غرام ذهب عيار 21 محلي (ليرة جديدة، اختياري)</label><input id="ovG21" class="num" type="text" inputmode="decimal" /></div>
+        <div><label>صلاحية التصحيح (بالساعات)</label><input id="ovHours" class="num" type="number" value="12" min="1" max="168" /></div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="pri" id="btnSaveOv">حفظ ونشر التصحيح</button>
+        <button class="bad" id="btnClearOv">إلغاء التصحيح اليدوي</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4) إدارة المصادر (تلغرام + واتساب — أساسي واحتياطي)</h2>
+      <div id="sourcesStatus"></div>
+      <label>المصدر الأساسي عند تقارب التوقيت</label>
+      <select id="cfgPrimary">
+        <option value="telegram">تلغرام أساسي · واتساب احتياطي</option>
+        <option value="whatsapp">واتساب أساسي · تلغرام احتياطي</option>
+      </select>
+      <label>قنوات تلغرام المفعّلة (مفصولة بفواصل، بالترتيب)</label>
+      <input id="cfgChannels" dir="ltr" placeholder="exchange_Currencyy,aboothman33" />
+      <label>قنوات تلغرام معطّلة مؤقتاً (للتذكر)</label>
+      <input id="cfgDisabled" dir="ltr" placeholder="aboothman33" />
+      <label>رابط تغذية واتساب الاحتياطية (مثلاً رابط /rates من sarraf-whatsapp-cloud، اختياري)</label>
+      <input id="cfgWaUrl" dir="ltr" placeholder="https://..." />
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;color:var(--ink2)">
+        <input id="cfgAutoWa" type="checkbox" style="width:20px;height:20px" />
+        اعتماد نشرات واتساب الواردة تلقائياً (دون انتظار موافقة يدوية إذا لم تتجاوز القفزة 10%)
+      </label>
+      <div class="row" style="margin-top:12px">
+        <button class="pri" id="btnSaveCfg">حفظ إعدادات المصادر</button>
+      </div>
+    </section>
+  </div>
+</main>
+<div id="toast"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const toast = (m) => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2600); };
+const getTok = () => sessionStorage.getItem('sarraf_admin_tok') || '';
+async function api(path, opts = {}) {
+  const res = await fetch('/admin/api/' + path, {
+    method: opts.body ? 'POST' : 'GET',
+    headers: { 'Authorization': 'Bearer ' + getTok(), 'Content-Type': 'application/json' },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+function fmtT(iso) {
+  if (!iso) return '—';
+  try { return new Intl.DateTimeFormat('ar-SY-u-nu-latn', { timeZone: 'Asia/Damascus', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(iso)); }
+  catch { return iso; }
+}
+function renderState(s) {
+  const r = s.rates;
+  if (r && r.usd_syp) {
+    const g = r.gold;
+    $('curSummary').innerHTML = `
+      <div><b>الدولار:</b> <span class="num">${r.usd_syp.buy} / ${r.usd_syp.sell}</span> ل.س جديدة
+        <span class="pill ok">${r.source_kind === 'manual' ? 'اعتماد يدوي' : r.source_kind === 'whatsapp' ? 'واتساب' : 'تلغرام'} · ${r.source || '—'}</span></div>
+      <div class="muted">وقت النشرة: ${fmtT(r.post_time)} · وقت الجلب: ${fmtT(r.fetched)}</div>
+      <div><b>الذهب عيار 21:</b> ${g ? `<span class="num">${g.syp?.['21'] ? Math.round(g.syp['21']) : Math.round((g.usd?.['21'] || 0) * r.usd_syp.sell)}</span> ل.س <span class="pill ${g.is_local ? 'ok' : 'warn'}">${g.is_local ? 'محلي' : 'تقديري'}</span> (وقت الذهب: ${fmtT(g.post_time || g.ounce_time)})` : '—'}</div>
+      ${s.override ? `<div class="pill warn">⚠️ يوجد تصحيح يدوي فعّال حتى ${fmtT(s.override.expires_at)}</div>` : ''}
+    `;
+  } else {
+    $('curSummary').innerHTML = `<span class="pill bad">لا توجد نشرة صالحة حالياً</span>`;
+  }
+
+  const srcs = r?.sources_tried || [];
+  $('sourcesStatus').innerHTML = srcs.map((x) => `
+    <div class="item">
+      <div class="row" style="justify-content:space-between">
+        <b>${x.channel} <span class="muted">(${x.kind || 'telegram'})</span></b>
+        <span class="pill ${x.ok ? 'ok' : 'bad'}">${x.ok ? 'شغال' : 'متوقف'}</span>
+      </div>
+      <div class="muted">${x.ok ? `دولار: <span class="num">${x.usd_syp?.buy} / ${x.usd_syp?.sell}</span> · وقت النشرة: ${fmtT(x.post_time)}` : (x.error || 'خطأ')}</div>
+    </div>
+  `).join('');
+
+  const c = s.config || {};
+  $('cfgPrimary').value = c.primary || 'telegram';
+  $('cfgChannels').value = (c.channels || []).join(',');
+  $('cfgDisabled').value = (c.disabled_channels || []).join(',');
+  $('cfgWaUrl').value = c.whatsapp_feed_url || '';
+  $('cfgAutoWa').checked = !!c.auto_approve_whatsapp;
+
+  const pend = s.pending || [];
+  if (!pend.length) {
+    $('pendingList').innerHTML = '<div class="muted">لا توجد نشرات معلّقة أو مرفوضة حالياً.</div>';
+  } else {
+    $('pendingList').innerHTML = pend.map((p) => `
+      <div class="item">
+        <div class="row" style="justify-content:space-between">
+          <b>${p.source || 'مصدر'} <span class="pill warn">${p.reason || 'بانتظار الاعتماد'}</span></b>
+          <span class="muted">${fmtT(p.received_at || p.post_time)}</span>
+        </div>
+        <div class="muted">الدولار: <span class="num">${p.data?.usd_syp ? p.data.usd_syp.buy + ' / ' + p.data.usd_syp.sell : '—'}</span></div>
+        ${p.raw ? `<div class="muted" style="white-space:pre-wrap;font-size:12px">${p.raw.slice(0, 220)}</div>` : ''}
+        <div class="row">
+          <button class="ok" onclick="actPending('${p.id}','approve')">✓ اعتماد النشرة</button>
+          <button class="bad" onclick="actPending('${p.id}','reject')">✕ تجاهل</button>
+        </div>
+      </div>
+    `).join('');
+  }
+}
+window.actPending = async (id, action) => {
+  try { renderState(await api('pending', { body: { id, action } })); toast(action === 'approve' ? 'تم الاعتماد والنشر' : 'تم التجاهل'); }
+  catch (e) { toast(e.message); }
+};
+async function load() {
+  try {
+    const s = await api('state');
+    $('loginBox').hidden = true; $('dash').hidden = false; $('topBtns').hidden = false;
+    renderState(s);
+  } catch (e) {
+    $('loginBox').hidden = false; $('dash').hidden = true; $('topBtns').hidden = true;
+    if (getTok()) toast('رمز الإدارة غير صحيح');
+  }
+}
+$('btnLogin').onclick = () => { sessionStorage.setItem('sarraf_admin_tok', $('tok').value.trim()); load(); };
+$('btnLogout').onclick = () => { sessionStorage.removeItem('sarraf_admin_tok'); load(); };
+$('btnRefresh').onclick = async () => { try { renderState(await api('refresh', { body: {} })); toast('تم تحديث المصادر'); } catch (e) { toast(e.message); } };
+$('btnPreview').onclick = async () => {
+  try {
+    const d = await api('parse', { body: { text: $('pasteText').value } });
+    $('previewBox').hidden = false;
+    $('previewBox').innerHTML = d.ok
+      ? `<b>النتيجة المستخرجة:</b><div class="num">${JSON.stringify({ usd: d.bulletin?.usd_syp, try: d.bulletin?.try_syp, eur: d.bulletin?.eur_syp, gold: d.gold }, null, 2)}</div>`
+      : `<span class="pill bad">لم يُعثر على أسعار صالحة في النص</span>`;
+  } catch (e) { toast(e.message); }
+};
+$('btnPublishText').onclick = async () => {
+  try {
+    renderState(await api('publish-text', { body: { text: $('pasteText').value, source: 'whatsapp-admin' } }));
+    $('pasteText').value = ''; $('previewBox').hidden = true;
+    toast('تم اعتماد ونشر النشرة بنجاح ✓');
+  } catch (e) { toast(e.message); }
+};
+$('btnSaveOv').onclick = async () => {
+  const num = (id) => { const v = parseFloat($(id).value); return Number.isFinite(v) && v > 0 ? v : null; };
+  const ub = num('ovUsdB'), us = num('ovUsdS');
+  if (!ub || !us || ub > us) return toast('أدخل شراء ومبيع الدولار بشكل صحيح');
+  const body = {
+    usd_syp: { buy: ub, sell: us },
+    try_syp: num('ovTryB') && num('ovTryS') ? { buy: num('ovTryB'), sell: num('ovTryS') } : null,
+    eur_syp: num('ovEurB') && num('ovEurS') ? { buy: num('ovEurB'), sell: num('ovEurS') } : null,
+    gold21_syp: num('ovG21'),
+    hours: parseInt($('ovHours').value, 10) || 12,
+  };
+  try { renderState(await api('override', { body })); toast('تم نشر التصحيح اليدوي ✓'); } catch (e) { toast(e.message); }
+};
+$('btnClearOv').onclick = async () => {
+  try { renderState(await api('override', { body: { clear: true } })); toast('تم إلغاء التصحيح اليدوي'); } catch (e) { toast(e.message); }
+};
+$('btnSaveCfg').onclick = async () => {
+  try {
+    const body = {
+      primary: $('cfgPrimary').value,
+      channels: $('cfgChannels').value.split(',').map((s) => s.trim()).filter(Boolean),
+      disabled_channels: $('cfgDisabled').value.split(',').map((s) => s.trim()).filter(Boolean),
+      whatsapp_feed_url: $('cfgWaUrl').value.trim(),
+      auto_approve_whatsapp: $('cfgAutoWa').checked,
+    };
+    renderState(await api('config', { body })); toast('تم حفظ إعدادات المصادر ✓');
+  } catch (e) { toast(e.message); }
+};
+if (getTok()) load();
+</script>
+</body>
+</html>
