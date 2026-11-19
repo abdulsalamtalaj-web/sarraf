@@ -28,7 +28,7 @@ const LS = {
   chartWhat: 'sarraf.chartWhat', chartDays: 'sarraf.chartDays',
   remote: 'sarraf.remoteConfig', otaReady: 'sarraf.otaReadyBuild', otaPath: 'sarraf.otaPath',
   order: 'sarraf.order', gcDir: 'sarraf.gcDir', change: 'sarraf.change', updSkip: 'sarraf.updSkip',
-  tipsOn: 'sarraf.tipsOn', wvDismissed: 'sarraf.wvDismissed', wvPos: 'sarraf.wvPos',
+  tipsOn: 'sarraf.tipsOn', wvDismissed: 'sarraf.wvDismissedV2', wvPos: 'sarraf.wvPos', wvCache: 'sarraf.wvCache',
 };
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -1020,6 +1020,11 @@ function go(view) {
   if (view === 'notifications') { go('settings'); setTimeout(() => $('notifySection').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }), 50); return; }
   for (const v of VIEWS) $('view-' + v).hidden = v !== view;
   currentView = view;
+  const vb = $('videoBubble');
+  if (vb) {
+    if (view !== 'main') { closeVideoPop(); vb.hidden = true; }
+    else if (currentWeeklyVideo && store.get(LS.tipsOn, true) !== false && store.get(LS.wvDismissed) !== currentWeeklyKey) vb.hidden = false;
+  }
   if (view === 'settings') fillSettings();
   if (view === 'privacy') loadPrivacy();
   if (view === 'order') renderOrder();
@@ -1137,23 +1142,30 @@ function setupVideoBubble() {
   // استعادة آخر مكان سحبه المستخدم
   const saved = store.get(LS.wvPos);
   if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
-    b.style.left = Math.max(10, Math.min(window.innerWidth - 64, saved.x)) + 'px';
+    b.style.left = Math.max(10, Math.min(window.innerWidth - 62, saved.x)) + 'px';
     b.style.top = Math.max(66, Math.min(window.innerHeight - 90, saved.y)) + 'px';
   }
-  let sx = 0, sy = 0, ox = 0, oy = 0, moved = false, dragging = false;
+  let sx = 0, sy = 0, ox = 0, oy = 0, moved = false, dragging = false, justDraggedAt = 0;
+  // منع تعارض اللمس مع pull-to-refresh
+  b.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+  b.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: true });
   b.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
     dragging = true; moved = false;
     const rect = b.getBoundingClientRect();
     sx = e.clientX; sy = e.clientY; ox = rect.left; oy = rect.top;
-    b.setPointerCapture?.(e.pointerId);
-    b.classList.add('dragging');
   });
   b.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) moved = true;
+    // عتبة 14px متوافقة مع شاشات اللمس حتى لا يُحسب النقر سحباً بالخطأ
+    if (!moved && (Math.abs(dx) > 14 || Math.abs(dy) > 14)) {
+      moved = true;
+      b.classList.add('dragging');
+      try { b.setPointerCapture?.(e.pointerId); } catch {}
+    }
     if (!moved) return;
-    const nx = Math.max(8, Math.min(window.innerWidth - 62, ox + dx));
+    const nx = Math.max(8, Math.min(window.innerWidth - 58, ox + dx));
     const ny = Math.max(64, Math.min(window.innerHeight - 80, oy + dy));
     b.style.left = nx + 'px';
     b.style.top = ny + 'px';
@@ -1163,35 +1175,50 @@ function setupVideoBubble() {
     dragging = false;
     b.classList.remove('dragging');
     if (moved) {
-      // التصاق تلقائي بأقرب حافة (يمين أو يسار مثل فقاعة الماسنجر)
+      justDraggedAt = Date.now();
       const rect = b.getBoundingClientRect();
-      const snapX = rect.left + rect.width / 2 < window.innerWidth / 2 ? 12 : window.innerWidth - 66;
+      const snapX = rect.left + rect.width / 2 < window.innerWidth / 2 ? 12 : window.innerWidth - 62;
       b.style.left = snapX + 'px';
       store.set(LS.wvPos, { x: snapX, y: Math.round(rect.top) });
-    } else {
-      openVideoPop();
     }
   };
   b.addEventListener('pointerup', finish);
   b.addEventListener('pointercancel', finish);
+  // الاعتماد على حدث click الأصلي للفتح المضمون 100% على جميع هواتف أندرويد
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (Date.now() - justDraggedAt < 350) return;
+    openVideoPop();
+  });
+}
+function showWeeklyBubble(wv) {
+  const b = $('videoBubble');
+  if (!b || !wv || !wv.url || !/^https?:\/\//i.test(wv.url)) return;
+  if (store.get(LS.tipsOn, true) === false) { b.hidden = true; return; }
+  currentWeeklyKey = String(wv.date || wv.url);
+  currentWeeklyVideo = wv;
+  if (store.get(LS.wvDismissed) === currentWeeklyKey) { b.hidden = true; return; }
+  const dot = $('vbDot'); if (dot) dot.hidden = false;
+  b.hidden = false;
 }
 async function loadTip() {
   const b = $('videoBubble');
   if (!b) return;
-  b.hidden = true;
-  if (store.get(LS.tipsOn, true) === false) return;
+  if (store.get(LS.tipsOn, true) === false) { b.hidden = true; return; }
+  // إظهار فوري من الكاش (أو رابط قناة يوتيوب كاحتياط) حتى يعمل الزر العائم مباشرة بدون انتظار الشبكة
+  const ytFallback = (CFG.SOCIAL || []).find((s) => s.platform === 'youtube' && s.url);
+  const cached = store.get(LS.wvCache) || (ytFallback ? { title: 'شاهد أحدث فيديو على قناتي', url: ytFallback.url, date: 'channel' } : null);
+  if (cached) showWeeklyBubble(cached);
   const url = contentUrl();
   if (!url) return;
   try {
     const c = await (await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + 't=' + Math.floor(Date.now() / 300000), 8000)).json();
     const wv = c && c.weekly_video;
-    if (!wv || !wv.url || !/^https?:\/\//i.test(wv.url)) return;
-    currentWeeklyKey = String(wv.date || wv.url);
-    currentWeeklyVideo = wv;
-    if (store.get(LS.wvDismissed) === currentWeeklyKey) return;
-    const dot = $('vbDot'); if (dot) dot.hidden = false;
-    b.hidden = false;
-  } catch { /* بدون نت أو بدون فيديو: الفقاعة لا تظهر */ }
+    if (wv && wv.url && /^https?:\/\//i.test(wv.url)) {
+      store.set(LS.wvCache, wv);
+      showWeeklyBubble(wv);
+    }
+  } catch { /* نُبقي على النسخة المخزّنة */ }
 }
 
 // ================= الإشعار الصباحي + تنبيه السعر =================

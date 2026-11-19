@@ -245,8 +245,9 @@ main { padding: 8px 16px 32px; display: flex; flex-direction: column; gap: 16px;
   max-width: 460px; margin: 0 auto; z-index: 77;
   background: linear-gradient(145deg, #1A2B22, #111F19); border-radius: 20px; padding: 18px;
   border: 1px solid rgba(245,197,66,.35); box-shadow: 0 18px 48px rgba(0,0,0,.6);
-  animation: toastIn var(--t-med) var(--ease);
+  animation: popIn var(--t-med) var(--ease);
 }
+@keyframes popIn { from { opacity: 0; transform: translateY(-10px) scale(.96); } }
 .wv-head { color: var(--gold); }
 .wv-title { margin: 6px 0 4px; font-size: 17px; font-weight: 700; color: var(--ink); padding-inline-end: 28px; }
 .wv-desc { margin: 0 0 10px; }

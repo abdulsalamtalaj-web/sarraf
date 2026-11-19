@@ -36,26 +36,6 @@
       <button id="updateClose" class="ub-close" aria-label="إخفاء">×</button>
     </div>
 
-    <!-- زر فيديو الأسبوع العائم (أعلى الشاشة، قابل للسحب مثل فقاعة الماسنجر) -->
-    <button id="videoBubble" type="button" class="video-bubble press" aria-label="فيديو الأسبوع" hidden>
-      <span class="vb-ring" aria-hidden="true"></span>
-      <span class="vb-play" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l11.02-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14z"/></svg>
-      </span>
-      <span id="vbDot" class="vb-dot" aria-hidden="true">1</span>
-    </button>
-    <div id="videoPopBackdrop" class="drawer-backdrop" hidden></div>
-    <section id="videoPop" class="video-pop" role="dialog" aria-modal="true" aria-label="فيديو الأسبوع" hidden>
-      <button id="wvClose" class="tip-close" aria-label="إخفاء الفيديو">×</button>
-      <div class="tip-title wv-head">🎬 فيديو الأسبوع · <span>عبد السلام ثلجة</span></div>
-      <h3 id="wvTitle" class="wv-title"></h3>
-      <p id="wvDesc" class="muted small wv-desc" hidden></p>
-      <div class="row-btns">
-        <button id="wvOpen" class="primary small-btn press wv-btn">▶ شاهد الفيديو الآن</button>
-        <button id="wvHide" class="ghost small-btn press">إخفاء</button>
-      </div>
-    </section>
-
     <main>
       <!-- تبويب سريع -->
       <div class="seg tabs enter" role="tablist" aria-label="نوع التحويل">
@@ -384,6 +364,26 @@
       <button id="updLater" class="ghost press">لاحقاً</button>
     </div>
   </div>
+
+  <!-- ================= زر فيديو الأسبوع العائم (خارج view-main لمنع أي تعارض مع السحب) ================= -->
+  <button id="videoBubble" type="button" class="video-bubble press" aria-label="فيديو الأسبوع" hidden>
+    <span class="vb-ring" aria-hidden="true"></span>
+    <span class="vb-play" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l11.02-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14z"/></svg>
+    </span>
+    <span id="vbDot" class="vb-dot" aria-hidden="true">1</span>
+  </button>
+  <div id="videoPopBackdrop" class="drawer-backdrop" hidden></div>
+  <section id="videoPop" class="video-pop" role="dialog" aria-modal="true" aria-label="فيديو الأسبوع" hidden>
+    <button id="wvClose" class="tip-close" aria-label="إغلاق">×</button>
+    <div class="tip-title wv-head">🎬 فيديو الأسبوع · <span>عبد السلام ثلجة</span></div>
+    <h3 id="wvTitle" class="wv-title"></h3>
+    <p id="wvDesc" class="muted small wv-desc" hidden></p>
+    <div class="row-btns">
+      <button id="wvOpen" class="primary small-btn press wv-btn">▶ شاهد الفيديو الآن</button>
+      <button id="wvHide" class="ghost small-btn press">إخفاء</button>
+    </div>
+  </section>
 
   <div id="toast" class="toast" role="status" hidden></div>
 
