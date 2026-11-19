@@ -1,29 +1,27 @@
 package com.liraconverter.app;
 
+import android.appwidget.AppWidgetManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
-import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
 
 /**
- * مصدر البيانات المشترك بين الويدجت والإشعار الصباحي والمزامنة بالخلفية.
+ * مصدر البيانات الموحّد لجميع الويدجتات (2×1، 4×1، 4×2، 4×3) والإشعارات والمزامنة بالخلفية.
  */
 public final class SarrafData {
     private static final String TAG = "SarrafData";
     public static final String PREFS = "sarraf_native";
     public static final String RUNNER_PREFS = "com.liraconverter.app.daily";
-    // سوريا على UTC+3 طوال السنة (بدون توقيت صيفي منذ 2022)
     public static final TimeZone DAMASCUS = TimeZone.getTimeZone("GMT+03:00");
 
     private SarrafData() {}
@@ -45,7 +43,16 @@ public final class SarrafData {
         } catch (Exception e) { return null; }
     }
 
-    /** تحليل ISO-8601 بدقة مع احترام فروق التوقيت (+03:00 / +00:00 / Z) */
+    public static boolean hasAnyWidget(Context c) {
+        AppWidgetManager m = AppWidgetManager.getInstance(c);
+        Class<?>[] cls = { RatesWidget.class, RatesWidgetSmall.class, RatesWidgetBar.class, RatesWidgetFull.class };
+        for (Class<?> cl : cls) {
+            int[] ids = m.getAppWidgetIds(new ComponentName(c, cl));
+            if (ids != null && ids.length > 0) return true;
+        }
+        return false;
+    }
+
     public static long parseIso(String iso) {
         if (iso == null || iso.length() < 19) return 0;
         try {
@@ -69,85 +76,107 @@ public final class SarrafData {
         }
     }
 
-    public static class Row {
-        public String key, label;
-        public double value = Double.NaN;
-    }
-
+    /** لقطة أسعار كاملة (شراء + مبيع لكل العملات + الذهب بالدولار والسوري) */
     public static class Snapshot {
-        public List<Row> rows = new ArrayList<>();
-        public double usd = Double.NaN;
+        public double usdBuy = Double.NaN, usdSell = Double.NaN;
+        public double tryBuy = Double.NaN, trySell = Double.NaN;
+        public double eurBuy = Double.NaN, eurSell = Double.NaN;
+        public double utBuy = Double.NaN, utSell = Double.NaN;
         public int usdDir = 0;
-        public double g21 = Double.NaN;
-        public boolean goldOn = true;
+
+        public double g21Usd = Double.NaN, g18Usd = Double.NaN, g24Usd = Double.NaN, gLiraUsd = Double.NaN;
+        public double g21Syp = Double.NaN;
+        public boolean goldLocal = false;
+
         public long at = 0;      // وقت الجلب
         public long postAt = 0;  // وقت النشرة الفعلي
     }
 
-    static double pick(JSONObject pair, String mode) {
-        if (pair == null) return Double.NaN;
-        return pair.optDouble(mode, pair.optDouble("buy", Double.NaN));
+    static double optNum(JSONObject o, String key) {
+        return o == null ? Double.NaN : o.optDouble(key, Double.NaN);
     }
 
-    static double valueOf(JSONObject r, String key, String mode) {
-        JSONObject p = r.optJSONObject(key);
-        if (p == null) {
-            JSONObject remit = r.optJSONObject("remit");
-            if (remit != null) p = remit.optJSONObject(key);
+    private static void applyRatesJson(Snapshot s, JSONObject r, double refUsdBuy) {
+        JSONObject usd = r.optJSONObject("usd_syp");
+        if (usd != null) {
+            double b = optNum(usd, "buy"), sl = optNum(usd, "sell");
+            if (!Double.isNaN(b) && !Double.isNaN(refUsdBuy)) s.usdDir = Double.compare(b, refUsdBuy);
+            if (!Double.isNaN(b)) s.usdBuy = b;
+            if (!Double.isNaN(sl)) s.usdSell = sl;
         }
-        return pick(p, mode);
+        JSONObject tr = r.optJSONObject("try_syp");
+        if (tr != null) {
+            double b = optNum(tr, "buy"), sl = optNum(tr, "sell");
+            if (!Double.isNaN(b)) s.tryBuy = b;
+            if (!Double.isNaN(sl)) s.trySell = sl;
+        }
+        JSONObject eu = r.optJSONObject("eur_syp");
+        if (eu != null) {
+            double b = optNum(eu, "buy"), sl = optNum(eu, "sell");
+            if (!Double.isNaN(b)) s.eurBuy = b;
+            if (!Double.isNaN(sl)) s.eurSell = sl;
+        }
+        JSONObject ut = r.optJSONObject("try_usd");
+        if (ut != null) {
+            double b = optNum(ut, "buy"), sl = optNum(ut, "sell");
+            if (!Double.isNaN(b)) s.utBuy = b;
+            if (!Double.isNaN(sl)) s.utSell = sl;
+        }
+        JSONObject gold = r.optJSONObject("gold");
+        if (gold != null) {
+            s.goldLocal = gold.optBoolean("is_local", !gold.optBoolean("estimated", true));
+            JSONObject gusd = gold.optJSONObject("usd");
+            JSONObject gsyp = gold.optJSONObject("syp");
+            if (gusd != null) {
+                s.g21Usd = optNum(gusd, "21");
+                s.g18Usd = optNum(gusd, "18");
+                s.g24Usd = optNum(gusd, "24");
+                s.gLiraUsd = optNum(gusd, "lira");
+            }
+            if (gsyp != null && gsyp.has("21")) {
+                s.g21Syp = optNum(gsyp, "21");
+            } else if (!Double.isNaN(s.g21Usd) && !Double.isNaN(s.usdSell)) {
+                s.g21Syp = s.g21Usd * s.usdSell;
+            }
+        }
     }
 
     public static Snapshot latest(Context c) {
         JSONObject w = appJson(c, "widget");
         JSONObject r = runnerJson(c, "lastRates");
         if (w == null && r == null) return null;
+
         Snapshot s = new Snapshot();
-        String mode = "buy";
         if (w != null) {
-            mode = w.optString("mode", "buy");
             s.at = w.optLong("at", 0);
             s.postAt = w.optLong("postAt", 0);
-            s.usd = w.optDouble("usd", Double.NaN);
             s.usdDir = w.optInt("usdDir", 0);
-            s.g21 = w.optDouble("g21", Double.NaN);
-            s.goldOn = w.optBoolean("goldOn", true);
-            JSONArray rows = w.optJSONArray("rows");
-            if (rows != null) for (int i = 0; i < rows.length(); i++) {
-                JSONObject o = rows.optJSONObject(i);
-                if (o == null) continue;
-                Row row = new Row();
-                row.key = o.optString("key");
-                row.label = o.optString("label");
-                row.value = o.optDouble("value", Double.NaN);
-                s.rows.add(row);
-            }
-        } else {
-            Row row = new Row();
-            row.key = "usd_syp"; row.label = "الدولار";
-            s.rows.add(row);
+            s.usdBuy = optNum(w, "usdBuy");
+            s.usdSell = optNum(w, "usdSell");
+            if (Double.isNaN(s.usdBuy)) s.usdBuy = optNum(w, "usd");
+            if (Double.isNaN(s.usdSell)) s.usdSell = s.usdBuy;
+            s.tryBuy = optNum(w, "tryBuy");
+            s.trySell = optNum(w, "trySell");
+            s.eurBuy = optNum(w, "eurBuy");
+            s.eurSell = optNum(w, "eurSell");
+            s.utBuy = optNum(w, "utBuy");
+            s.utSell = optNum(w, "utSell");
+            s.g21Usd = optNum(w, "g21Usd");
+            s.g18Usd = optNum(w, "g18Usd");
+            s.g24Usd = optNum(w, "g24Usd");
+            s.gLiraUsd = optNum(w, "gLiraUsd");
+            s.g21Syp = optNum(w, "g21");
+            s.goldLocal = w.optBoolean("goldLocal", false);
         }
+
         if (r != null) {
             long rAt = parseIso(r.optString("fetched", null));
             long rPost = parseIso(r.optString("post_time", null));
-            if (rAt > s.at) {
-                double newUsd = valueOf(r, "usd_syp", mode);
+            if (rAt >= s.at || Double.isNaN(s.usdBuy)) {
                 JSONObject prevBg = appJson(c, "prevBgUsd");
-                double refUsd = prevBg != null ? pick(prevBg, mode) : s.usd;
-                if (!Double.isNaN(newUsd) && !Double.isNaN(refUsd)) s.usdDir = Double.compare(newUsd, refUsd);
-                if (!Double.isNaN(newUsd)) s.usd = newUsd;
-                for (Row row : s.rows) {
-                    double v = valueOf(r, row.key, mode);
-                    if (!Double.isNaN(v)) row.value = v;
-                }
-                JSONObject gold = r.optJSONObject("gold");
-                if (gold != null) {
-                    JSONObject syp = gold.optJSONObject("syp");
-                    JSONObject gusd = gold.optJSONObject("usd");
-                    if (syp != null && syp.has("21")) s.g21 = syp.optDouble("21");
-                    else if (gusd != null && gusd.has("21") && !Double.isNaN(s.usd)) s.g21 = gusd.optDouble("21") * s.usd;
-                }
-                s.at = rAt;
+                double ref = prevBg != null ? optNum(prevBg, "buy") : s.usdBuy;
+                applyRatesJson(s, r, ref);
+                if (rAt > 0) s.at = rAt;
                 if (rPost > 0) s.postAt = rPost;
             }
         }
@@ -160,6 +189,11 @@ public final class SarrafData {
         return f.format(v);
     }
 
+    public static String fmtUsd(double v, int dec) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) return "—";
+        return "$" + fmt(v, dec);
+    }
+
     public static String timeOf(long ms) {
         if (ms <= 0) return "—";
         SimpleDateFormat f = new SimpleDateFormat("h:mm", Locale.US);
@@ -167,9 +201,8 @@ public final class SarrafData {
         return f.format(new Date(ms));
     }
 
-    /** نص قصير لعمر النشرة بالويدجت (يفصل النشرة القديمة عن الحديثة) */
     public static String widgetTimeLabel(Snapshot s, boolean compact) {
-        if (s == null) return compact ? "" : "افتح التطبيق مرة";
+        if (s == null) return compact ? "—" : "اضغط ↻ للتحديث";
         long ref = s.postAt > 0 ? s.postAt : s.at;
         if (ref <= 0) return "—";
         long ageH = (System.currentTimeMillis() - ref) / 3600_000L;

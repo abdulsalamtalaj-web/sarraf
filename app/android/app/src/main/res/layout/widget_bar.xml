@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ويدجت 4×1 الشريط السريع: الدولار/سوري · التركي/سوري · ذهب 21 بالدولار + تحديث فوري -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/wb_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:layoutDirection="rtl"
+    android:gravity="center_vertical"
+    android:padding="8dp"
+    android:background="@drawable/widget_bg">
+
+    <!-- بطاقة الدولار / سوري -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1.15"
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:paddingStart="9dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="5dp"
+        android:paddingBottom="5dp"
+        android:background="@drawable/widget_tile">
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:layout_width="3dp" android:layout_height="11dp" android:src="@drawable/widget_bar_usd" android:contentDescription="@null" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="4dp" android:text="دولار · ل.س" android:textColor="#9BB6E8" android:textSize="10sp" android:textStyle="bold" android:maxLines="1" />
+            <TextView android:id="@+id/wb_usd_arrow" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="10sp" android:textStyle="bold" />
+        </LinearLayout>
+        <TextView android:id="@+id/wb_usd_pair" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:gravity="right" android:textColor="#EEF4F0" android:textSize="13sp" android:textStyle="bold" android:maxLines="1" android:layout_marginTop="2dp" />
+        <TextView android:id="@+id/wb_time" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="شراء / مبيع" android:textColor="#7E9489" android:textSize="9sp" android:maxLines="1" />
+    </LinearLayout>
+
+    <!-- بطاقة التركي / سوري -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:layout_marginStart="6dp"
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:paddingStart="9dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="5dp"
+        android:paddingBottom="5dp"
+        android:background="@drawable/widget_tile">
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:layout_width="3dp" android:layout_height="11dp" android:src="@drawable/widget_bar_try" android:contentDescription="@null" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="تركي · ل.س" android:textColor="#F4A5A5" android:textSize="10sp" android:textStyle="bold" android:maxLines="1" />
+        </LinearLayout>
+        <TextView android:id="@+id/wb_try_pair" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:gravity="right" android:textColor="#EEF4F0" android:textSize="13sp" android:textStyle="bold" android:maxLines="1" android:layout_marginTop="2dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="شراء / مبيع" android:textColor="#7E9489" android:textSize="9sp" android:maxLines="1" />
+    </LinearLayout>
+
+    <!-- بطاقة ذهب عيار 21 بالدولار -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="0.95"
+        android:layout_marginStart="6dp"
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="5dp"
+        android:paddingBottom="5dp"
+        android:background="@drawable/widget_tile_gold">
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:layout_width="3dp" android:layout_height="11dp" android:src="@drawable/widget_bar_gold" android:contentDescription="@null" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="ذهب 21" android:textColor="#F5C542" android:textSize="10sp" android:textStyle="bold" android:maxLines="1" />
+        </LinearLayout>
+        <TextView android:id="@+id/wb_gold_usd" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:gravity="right" android:textColor="#F5C542" android:textSize="14sp" android:textStyle="bold" android:maxLines="1" android:layout_marginTop="2dp" />
+        <TextView android:id="@+id/wb_gold_syp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="بالدولار" android:textColor="#C9B77B" android:textSize="9sp" android:maxLines="1" />
+    </LinearLayout>
+
+    <!-- زر تحديث فوري -->
+    <TextView
+        android:id="@+id/wb_refresh"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_marginStart="6dp"
+        android:gravity="center"
+        android:background="@drawable/widget_btn_refresh"
+        android:text="↻"
+        android:textColor="#F5C542"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+</LinearLayout>

@@ -12,9 +12,22 @@ import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    private void handleUpdateIntent(android.content.Intent intent) {
+        if (intent != null && intent.getBooleanExtra("openUpdate", false)) {
+            SarrafData.prefs(this).edit().putBoolean("pendingOpenUpdate", true).apply();
+        }
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        handleUpdateIntent(intent);
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(SarrafNativePlugin.class);
+        handleUpdateIntent(getIntent());
         // التحديث الهوائي: إذا آخر حزمة واجهة ما اشتغلت، منرجع للي قبلها قبل ما Capacitor يحمّلها
         Ota.guard(this);
         super.onCreate(savedInstanceState);

@@ -1,15 +1,125 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ويدجت 2×1: الدولار بالليرة الجديدة مع سهم -->
+<!-- ويدجت 2×1 احترافية: الدولار مقابل السوري (شراء ومبيع + سهم + تحديث فوري) -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/ws_root" android:layout_width="match_parent" android:layout_height="match_parent"
-    android:orientation="vertical" android:layoutDirection="rtl" android:gravity="center_vertical"
-    android:paddingStart="12dp" android:paddingEnd="12dp" android:paddingTop="6dp" android:paddingBottom="6dp" android:background="@drawable/widget_bg">
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="الدولار · ل.س" android:textColor="#C9D3CE" android:textSize="12sp" />
-        <TextView android:id="@+id/ws_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#94A39B" android:textSize="12sp" />
+    android:id="@+id/ws_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:layoutDirection="rtl"
+    android:gravity="center_vertical"
+    android:paddingStart="12dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp"
+    android:background="@drawable/widget_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:layout_width="4dp"
+            android:layout_height="14dp"
+            android:src="@drawable/widget_bar_usd"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:text="الدولار · سوري"
+            android:textColor="#D5E0DA"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:maxLines="1" />
+
+        <TextView
+            android:id="@+id/ws_arrow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/ws_refresh"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:gravity="center"
+            android:background="@drawable/widget_btn_refresh"
+            android:text="↻"
+            android:textColor="#F5C542"
+            android:textSize="13sp"
+            android:textStyle="bold" />
     </LinearLayout>
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
-        <TextView android:id="@+id/ws_arrow" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="14sp" android:layout_marginEnd="4dp" />
-        <TextView android:id="@+id/ws_value" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="left|center_vertical" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="22sp" android:textStyle="bold" android:maxLines="1" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="2dp">
+
+        <TextView
+            android:id="@+id/ws_buy"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="—"
+            android:textDirection="ltr"
+            android:gravity="right|center_vertical"
+            android:textColor="#EEF4F0"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:maxLines="1" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text=" / "
+            android:textColor="#6B7E74"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/ws_sell"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="—"
+            android:textDirection="ltr"
+            android:gravity="left|center_vertical"
+            android:textColor="#A7BDB2"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:maxLines="1" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="شراء / مبيع"
+            android:textColor="#7D9187"
+            android:textSize="10sp"
+            android:maxLines="1" />
+
+        <TextView
+            android:id="@+id/ws_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="—"
+            android:textColor="#94A89E"
+            android:textSize="10sp"
+            android:maxLines="1" />
     </LinearLayout>
 </LinearLayout>

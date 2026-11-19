@@ -4,6 +4,8 @@
     <string name="title_activity_main">صرّاف</string>
     <string name="package_name">com.liraconverter.app</string>
     <string name="custom_url_scheme">com.liraconverter.app</string>
-    <string name="widget_desc">أول 3 عملات وغرام الذهب عيار 21</string>
-    <string name="widget_small_desc">سعر الدولار بالليرة الجديدة</string>
+    <string name="widget_small_desc">الدولار مقابل الليرة السورية (شراء ومبيع + تحديث فوري)</string>
+    <string name="widget_bar_desc">شريط سريع: الدولار والتركي وغرام الذهب 21 بالدولار</string>
+    <string name="widget_desc">بطاقات الدولار والتركي واليورو وغرام الذهب 21 (شراء ومبيع)</string>
+    <string name="widget_full_desc">لوحة السوق الكاملة: الدولار والتركي واليورو والذهب بكل عياراته بالدولار</string>
 </resources>

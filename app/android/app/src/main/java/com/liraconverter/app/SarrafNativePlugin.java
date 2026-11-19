@@ -50,6 +50,17 @@ public class SarrafNativePlugin extends Plugin {
         return new File(new File(c.getFilesDir(), "updates"), "sarraf.apk");
     }
 
+    /** يتحقق إن كان المستخدم فتح التطبيق من إشعار "إصدار جديد" ويعيد تعيين العلم */
+    @PluginMethod
+    public void consumeOpenUpdate(PluginCall call) {
+        Context c = getContext();
+        boolean open = SarrafData.prefs(c).getBoolean("pendingOpenUpdate", false);
+        if (open) SarrafData.prefs(c).edit().putBoolean("pendingOpenUpdate", false).apply();
+        JSObject out = new JSObject();
+        out.put("open", open);
+        call.resolve(out);
+    }
+
     /** إرجاع أحدث أسعار تم جلبها في الخلفية (سواء عبر WorkManager أو BackgroundRunner) ليفتح التطبيق بأحدث سعر فوراً */
     @PluginMethod
     public void getBackgroundRates(PluginCall call) {

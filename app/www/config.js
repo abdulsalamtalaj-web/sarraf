@@ -31,8 +31,8 @@ window.APP_CONFIG = {
   QUICK_AMOUNTS: [1, 10, 50, 100, 500, 1000],
   OLD_PER_NEW: 100,                                      // 1 ليرة جديدة = 100 ليرة قديمة
   OLD_QUICK_AMOUNTS: [1000, 5000, 10000, 50000, 100000], // أزرار المبالغ السريعة (بالقديم)
-  // عملة عرض الذهب أول مرة: 'SYP' سوري جديد | 'SYP_OLD' سوري قديم | 'USD' دولار | 'TRY' تركي
-  GOLD_DEFAULT_CURRENCY: 'SYP',
+  // عملة عرض الذهب أول مرة: 'USD' دولار | 'SYP' سوري جديد | 'SYP_OLD' سوري قديم | 'TRY' تركي
+  GOLD_DEFAULT_CURRENCY: 'USD',
 
   // ---- الإشعارات ----
   NOTIFY_DEFAULT_TIME: '09:00',  // بتوقيت دمشق

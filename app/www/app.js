@@ -21,14 +21,14 @@ const LS = {
   rates: 'lira.rates', prev: 'lira.prevRates', prevG: 'lira.prevGold', okAt: 'lira.lastOkAt',
   src: 'lira.src', karat: 'lira.karat', mode: 'lira.mode', amount: 'lira.amount',
   api: 'lira.api', channels: 'lira.channels', resKarat: 'lira.resKarat',
-  tab: 'sarraf.tab', goldCur: 'sarraf.goldCur', gcGrams: 'sarraf.gcGrams', gcKarat: 'sarraf.gcKarat', gcFee: 'sarraf.gcFee',
+  tab: 'sarraf.tab', goldCur: 'sarraf.goldCurV2', gcGrams: 'sarraf.gcGrams', gcKarat: 'sarraf.gcKarat', gcFee: 'sarraf.gcFee', gcFeeCur: 'sarraf.gcFeeCur',
   onFlip: 'sarraf.onFlip', onOld: 'sarraf.onOld',
   launches: 'sarraf.launches', tipHiddenAt: 'sarraf.tipHiddenAt', notifyPrompted: 'sarraf.notifyPrompted',
   notify: 'sarraf.notify', alert: 'sarraf.alert', dev: 'sarraf.dev', hist: 'sarraf.history',
   chartWhat: 'sarraf.chartWhat', chartDays: 'sarraf.chartDays',
   remote: 'sarraf.remoteConfig', otaReady: 'sarraf.otaReadyBuild', otaPath: 'sarraf.otaPath',
   order: 'sarraf.order', gcDir: 'sarraf.gcDir', change: 'sarraf.change', updSkip: 'sarraf.updSkip',
-  tipsOn: 'sarraf.tipsOn', wvDismissed: 'sarraf.wvDismissed',
+  tipsOn: 'sarraf.tipsOn', wvDismissed: 'sarraf.wvDismissed', wvPos: 'sarraf.wvPos',
 };
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -129,9 +129,10 @@ const state = {
   resKarat: store.get(LS.resKarat, '21'),
   mode: store.get(LS.mode, 'buy'),
   tab: store.get(LS.tab, 'convert'),
-  goldCur: store.get(LS.goldCur, CFG.GOLD_DEFAULT_CURRENCY || 'SYP'),
+  goldCur: store.get(LS.goldCur, CFG.GOLD_DEFAULT_CURRENCY || 'USD'),
   gcKarat: store.get(LS.gcKarat, '21'),
   gcDir: store.get(LS.gcDir, 'g2m'), // g2m: غرامات ← سعر | m2g: مبلغ ← غرامات
+  gcFeeCur: store.get(LS.gcFeeCur, 'USD'), // عملة أجرة الصياغة: 'USD' افتراضياً أو عملة العرض الحالية 'CUR'
   onFlip: store.get(LS.onFlip, false), // false: القديم فوق (المُدخل) والجديد تحت
   chartWhat: store.get(LS.chartWhat, 'usd'),
   chartDays: store.get(LS.chartDays, 7),
@@ -357,15 +358,28 @@ async function refresh({ manual = false } = {}) {
   }
 }
 
-// بعد كل سعر جديد: الويدجت + نص الإشعار الصباحي (الأصلي)
+// بعد كل سعر جديد: تحديث كل الويدجتات الاحترافية الأربعة (شراء+مبيع + ذهب بالدولار) + نص الإشعار الصباحي
 function afterNewRates(r) {
   const N = P('SarrafNative');
   if (!N) return;
-  const m = state.mode, prevUsd = state.prev?.usd_syp?.[m];
-  const rows = foreignEnabled(r).slice(0, 3).map((id) => ({ key: PRICE_KEY[id], label: SHORT_NAME[id], value: priceOf(r, id)?.[m] ?? NaN }));
+  const m = state.mode, prevUsd = state.prev?.usd_syp?.buy;
+  const g = r.gold;
   N.updateWidget({
-    rows, mode: m, usd: r.usd_syp[m], usdDir: prevUsd ? Math.sign(r.usd_syp[m] - prevUsd) : 0,
-    g21: goldSyp(r, '21', m) ?? NaN, goldOn: goldOn(), at: Date.now(),
+    mode: m,
+    usd: r.usd_syp[m],
+    usdBuy: r.usd_syp.buy, usdSell: r.usd_syp.sell,
+    tryBuy: r.try_syp?.buy ?? NaN, trySell: r.try_syp?.sell ?? NaN,
+    eurBuy: r.eur_syp?.buy ?? NaN, eurSell: r.eur_syp?.sell ?? NaN,
+    utBuy: r.try_usd?.buy ?? NaN, utSell: r.try_usd?.sell ?? NaN,
+    usdDir: prevUsd ? Math.sign(r.usd_syp.buy - prevUsd) : 0,
+    g21Usd: g?.usd?.['21'] ?? NaN,
+    g18Usd: g?.usd?.['18'] ?? NaN,
+    g24Usd: g?.usd?.['24'] ?? NaN,
+    gLiraUsd: g?.usd?.lira ?? NaN,
+    g21: goldSyp(r, '21', m) ?? NaN,
+    goldLocal: !!(g && (g.is_local ?? !g.estimated)),
+    goldOn: goldOn(),
+    at: Date.now(),
     postAt: r.post_time ? Date.parse(r.post_time) || 0 : 0,
   }).catch(() => {});
   if (notifySettings().enabled) N.setMorning({ body: morningText(r) }).catch(() => {});
@@ -544,8 +558,10 @@ function renderGold(animate) {
   const items = [...GOLD_ITEMS, ...(g.ounce_usd ? [{ k: 'ounce', name: 'الأونصة العالمية', sub: '31.1 غرام عيار 24' }] : [])];
   $('goldList').innerHTML = items.map((it) => {
     const v = goldIn(r, it.k, cur, m), c = dirClass(v, pg ? goldIn(pg, it.k, cur, m) : null);
+    const sypEq = cur === 'USD' ? goldSyp(r, it.k, m) : null;
+    const subLine = [it.sub, sypEq ? `≈ ${fmtNum(sypEq, 0)} ل.س` : ''].filter(Boolean).join(' · ');
     return `<div class="g-row ${it.main ? 'main' : ''}">
-      <div><div class="g-name">${it.name}</div>${it.sub ? `<div class="g-sub">${it.sub}</div>` : ''}</div>
+      <div><div class="g-name">${it.name}</div>${subLine ? `<div class="g-sub">${subLine}</div>` : ''}</div>
       <div class="g-val ${c}">${arrowHtml(c)}${cur === 'USD' ? '$' : ''}${numSpan(`gold-${it.k}`, v, dec(v))}${cur !== 'USD' ? `<span class="sym">${cfg.sym}</span>` : ''}</div>
     </div>`;
   }).join('');
@@ -568,7 +584,7 @@ function renderGold(animate) {
   }
 }
 
-// حاسبة الذهب: (سعر الغرام + أجرة الصياغة للغرام) × عدد الغرامات
+// حاسبة الذهب: (سعر الغرام + أجرة الصياغة للغرام) × عدد الغرامات — الذهب والصياغة بالدولار افتراضياً
 function renderGoldCalc(animate) {
   const r = state.rates;
   if (!r?.gold) return;
@@ -576,32 +592,40 @@ function renderGoldCalc(animate) {
   $('gcKarat').innerHTML = ['21', '18', '24'].map((k) => `<button class="press" role="radio" data-k="${k}" aria-checked="${k === state.gcKarat}">عيار ${k}</button>`).join('');
   document.querySelectorAll('#gcDir [data-dir]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.dir === state.gcDir)));
   const input = parseAmount($('gcGrams').value);
-  const fee = parseAmount($('gcFee').value);
+  const feeRaw = parseAmount($('gcFee').value);
   const cur = state.goldCur, cfg = GOLD_CURS[cur];
+  const feeInUsd = state.gcFeeCur === 'USD' || cur === 'USD';
+  // تحويل أجرة الصياغة من الدولار إلى عملة العرض الحالية إذا كان المستخدم يعرض الذهب بعملة أخرى
+  const feeInCur = feeInUsd && cur !== 'USD'
+    ? (r.usd_syp?.[state.mode] ? sypTo(cur, feeRaw * r.usd_syp[state.mode], r, state.mode) : 0)
+    : feeRaw;
   const price = goldIn(r, state.gcKarat, cur, state.mode);
   const dec = cur === 'USD' ? 2 : cfg.dec;
   const br = $('gcBreak');
-  $('gcFeeSym').textContent = cfg.sym;
+  const feeBtn = $('gcFeeCur');
+  if (feeBtn) feeBtn.textContent = feeInUsd ? '$' : cfg.sym;
   if (state.gcDir === 'm2g') {
-    // مبلغ → كم غرام بيجيب (مع الصياغة إذا مكتوبة)
-    const grams = price ? input / (price + fee) : NaN;
+    const grams = price ? input / (price + feeInCur) : NaN;
     $('gcGrams').setAttribute('aria-label', 'المبلغ');
     $('gcUnit').textContent = `${cur === 'USD' ? '$' : ''}${fmtNum(input, dec)}${cur !== 'USD' ? ' ' + cfg.sym : ''} بتجيب عيار ${state.gcKarat} =`;
     setNum($('gcResult'), 'gc', isFinite(grams) ? grams : null, 3, animate);
     $('gcSym').textContent = 'غرام';
-    br.hidden = !(fee > 0 && isFinite(grams));
-    if (!br.hidden) br.textContent = `على سعر ${fmtNum(price, dec)} + صياغة ${fmtNum(fee, dec)} ${cfg.sym} للغرام`;
+    br.hidden = !(feeRaw > 0 && isFinite(grams));
+    if (!br.hidden) br.textContent = `على سعر ${cur === 'USD' ? '$' : ''}${fmtNum(price, dec)} + صياغة ${feeInUsd ? '$' : ''}${fmtNum(feeRaw, feeInUsd ? 2 : dec)}${feeInUsd ? '' : ' ' + cfg.sym} للغرام`;
     return;
   }
   const grams = input;
-  const gold = grams * (price ?? NaN), fees = grams * fee;
+  const gold = grams * (price ?? NaN), fees = grams * feeInCur;
   const v = gold + fees;
   $('gcGrams').setAttribute('aria-label', 'عدد الغرامات');
   $('gcUnit').textContent = `${fmtNum(grams, 3)} غرام عيار ${state.gcKarat} =`;
   setNum($('gcResult'), 'gc', isFinite(v) ? v : null, dec, animate);
   $('gcSym').textContent = cfg.sym;
-  br.hidden = !(fee > 0 && isFinite(gold));
-  if (!br.hidden) br.textContent = `ذهب ${fmtNum(gold, dec)} + صياغة ${fmtNum(fees, dec)} ${cfg.sym}`;
+  br.hidden = !(feeRaw > 0 && isFinite(gold));
+  if (!br.hidden) {
+    const feeLbl = feeInUsd && cur !== 'USD' ? `$${fmtNum(grams * feeRaw, 2)} (${fmtNum(fees, dec)} ${cfg.sym})` : `${cur === 'USD' ? '$' : ''}${fmtNum(fees, dec)}${cur === 'USD' ? '' : ' ' + cfg.sym}`;
+    br.textContent = `ذهب ${cur === 'USD' ? '$' : ''}${fmtNum(gold, dec)}${cur === 'USD' ? '' : ' ' + cfg.sym} + صياغة ${feeLbl}`;
+  }
 }
 
 // ================= الرسم البياني =================
@@ -1081,41 +1105,93 @@ function onVersionTap() {
   } else if (devTaps >= 3) toast(`باقي ${left} ${left === 1 ? 'نقرة' : left === 2 ? 'نقرتين' : 'نقرات'}`, 900);
 }
 
-// ================= معلومة طبية اليوم + فيديو الأسبوع =================
-let currentWeeklyKey = '';
+// ================= زر فيديو الأسبوع العائم (أعلى الشاشة — مثل فقاعة الماسنجر) =================
+let currentWeeklyKey = '', currentWeeklyVideo = null;
+function openVideoPop() {
+  if (!currentWeeklyVideo) return;
+  $('wvTitle').textContent = currentWeeklyVideo.title || 'فيديو جديد على قناتي';
+  const desc = $('wvDesc');
+  if (desc) { desc.textContent = currentWeeklyVideo.desc || ''; desc.hidden = !currentWeeklyVideo.desc; }
+  $('wvOpen').onclick = () => { closeVideoPop(); openExternal(currentWeeklyVideo.url); };
+  const bd = $('videoPopBackdrop'), pop = $('videoPop');
+  bd.hidden = false; pop.hidden = false;
+  void bd.offsetWidth;
+  bd.classList.add('show');
+  const dot = $('vbDot'); if (dot) dot.hidden = true;
+}
+function closeVideoPop() {
+  const bd = $('videoPopBackdrop'), pop = $('videoPop');
+  if (!pop || pop.hidden) return;
+  bd.classList.remove('show');
+  pop.hidden = true;
+  setTimeout(() => { bd.hidden = true; }, reduceMotion ? 0 : 200);
+}
+function hideVideoBubble() {
+  closeVideoPop();
+  if (currentWeeklyKey) store.set(LS.wvDismissed, currentWeeklyKey);
+  const b = $('videoBubble'); if (b) b.hidden = true;
+}
+function setupVideoBubble() {
+  const b = $('videoBubble');
+  if (!b) return;
+  // استعادة آخر مكان سحبه المستخدم
+  const saved = store.get(LS.wvPos);
+  if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+    b.style.left = Math.max(10, Math.min(window.innerWidth - 64, saved.x)) + 'px';
+    b.style.top = Math.max(66, Math.min(window.innerHeight - 90, saved.y)) + 'px';
+  }
+  let sx = 0, sy = 0, ox = 0, oy = 0, moved = false, dragging = false;
+  b.addEventListener('pointerdown', (e) => {
+    dragging = true; moved = false;
+    const rect = b.getBoundingClientRect();
+    sx = e.clientX; sy = e.clientY; ox = rect.left; oy = rect.top;
+    b.setPointerCapture?.(e.pointerId);
+    b.classList.add('dragging');
+  });
+  b.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) moved = true;
+    if (!moved) return;
+    const nx = Math.max(8, Math.min(window.innerWidth - 62, ox + dx));
+    const ny = Math.max(64, Math.min(window.innerHeight - 80, oy + dy));
+    b.style.left = nx + 'px';
+    b.style.top = ny + 'px';
+  });
+  const finish = () => {
+    if (!dragging) return;
+    dragging = false;
+    b.classList.remove('dragging');
+    if (moved) {
+      // التصاق تلقائي بأقرب حافة (يمين أو يسار مثل فقاعة الماسنجر)
+      const rect = b.getBoundingClientRect();
+      const snapX = rect.left + rect.width / 2 < window.innerWidth / 2 ? 12 : window.innerWidth - 66;
+      b.style.left = snapX + 'px';
+      store.set(LS.wvPos, { x: snapX, y: Math.round(rect.top) });
+    } else {
+      openVideoPop();
+    }
+  };
+  b.addEventListener('pointerup', finish);
+  b.addEventListener('pointercancel', finish);
+}
 async function loadTip() {
-  const card = $('tipCard'), wvCard = $('weeklyVideoCard');
-  card.hidden = true;
-  if (wvCard) wvCard.hidden = true;
+  const b = $('videoBubble');
+  if (!b) return;
+  b.hidden = true;
   if (store.get(LS.tipsOn, true) === false) return;
   const url = contentUrl();
   if (!url) return;
   try {
     const c = await (await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + 't=' + Math.floor(Date.now() / 300000), 8000)).json();
-    // 1) بطاقة فيديو الأسبوع القابلة للنقر (تعود للظهور تلقائياً عند تغيير date أو url في tips.json)
     const wv = c && c.weekly_video;
-    if (wvCard && wv && wv.url && /^https?:\/\//i.test(wv.url)) {
-      currentWeeklyKey = String(wv.date || wv.url);
-      if (store.get(LS.wvDismissed) !== currentWeeklyKey) {
-        $('wvTitle').textContent = wv.title || 'فيديو جديد على قناتي';
-        const desc = $('wvDesc');
-        if (desc) { desc.textContent = wv.desc || ''; desc.hidden = !wv.desc; }
-        $('wvOpen').onclick = () => openExternal(wv.url);
-        wvCard.hidden = false;
-      }
-    }
-    // 2) بطاقة المعلومة الطبية اليومية
-    const hiddenAt = store.get(LS.tipHiddenAt);
-    if (hiddenAt && Date.now() - hiddenAt < 24 * 3600e3) return;
-    const tips = (c.tips || []).filter((t) => t && t.text);
-    if (!tips.length) return;
-    const day = Math.floor((Date.now() + 3 * 3600e3) / 86400e3);
-    const tip = tips[day % tips.length];
-    $('tipText').textContent = tip.text;
-    $('tipVideo').hidden = !tip.video;
-    $('tipVideo').onclick = () => openExternal(tip.video);
-    card.hidden = false;
-  } catch { /* بدون نت أو بدون محتوى: البطاقات لا تظهر */ }
+    if (!wv || !wv.url || !/^https?:\/\//i.test(wv.url)) return;
+    currentWeeklyKey = String(wv.date || wv.url);
+    currentWeeklyVideo = wv;
+    if (store.get(LS.wvDismissed) === currentWeeklyKey) return;
+    const dot = $('vbDot'); if (dot) dot.hidden = false;
+    b.hidden = false;
+  } catch { /* بدون نت أو بدون فيديو: الفقاعة لا تظهر */ }
 }
 
 // ================= الإشعار الصباحي + تنبيه السعر =================
@@ -1466,7 +1542,8 @@ function init() {
     const b = e.target.closest('[data-cur]'); if (!b) return;
     if (b.dataset.cur === state.goldCur) return;
     state.goldCur = b.dataset.cur; store.set(LS.goldCur, state.goldCur);
-    if ($('gcFee').value) {
+    // إذا كانت الصياغة بغير الدولار نصفرها عند تبديل العملة حتى لا تتضخم الأرقام
+    if (state.gcFeeCur !== 'USD' && $('gcFee').value) {
       $('gcFee').value = '';
       store.set(LS.gcFee, '');
       toast('تم تصفير أجرة الصياغة لتغيير العملة');
@@ -1474,6 +1551,13 @@ function init() {
     renderGold(true);
     pushRunnerSettings();
     if (state.rates && notifySettings().enabled) P('SarrafNative')?.setMorning({ body: morningText(state.rates) }).catch(() => {});
+  });
+  $('gcFeeCur')?.addEventListener('click', () => {
+    if (state.goldCur === 'USD') { toast('الذهب والصياغة بالدولار ($)'); return; }
+    state.gcFeeCur = state.gcFeeCur === 'USD' ? 'CUR' : 'USD';
+    store.set(LS.gcFeeCur, state.gcFeeCur);
+    if ($('gcFee').value) { $('gcFee').value = ''; store.set(LS.gcFee, ''); }
+    renderGoldCalc(false);
   });
   $('gcGrams').value = store.get(LS.gcGrams, '1');
   $('gcFee').value = store.get(LS.gcFee, '');
@@ -1507,13 +1591,12 @@ function init() {
   $('livePill')?.addEventListener('click', () => { toast('عم نحدّث الأسعار…', 1000); refresh({ manual: true }); });
   $('tipsEnabled')?.addEventListener('change', (e) => {
     store.set(LS.tipsOn, e.target.checked);
-    if (e.target.checked) { store.set(LS.tipHiddenAt, 0); store.set(LS.wvDismissed, ''); loadTip(); }
-    else { $('tipCard').hidden = true; if ($('weeklyVideoCard')) $('weeklyVideoCard').hidden = true; }
+    if (e.target.checked) { store.set(LS.wvDismissed, ''); loadTip(); }
+    else { closeVideoPop(); if ($('videoBubble')) $('videoBubble').hidden = true; }
   });
-  $('wvClose')?.addEventListener('click', () => {
-    if (currentWeeklyKey) store.set(LS.wvDismissed, currentWeeklyKey);
-    $('weeklyVideoCard').hidden = true;
-  });
+  $('wvClose')?.addEventListener('click', closeVideoPop);
+  $('wvHide')?.addEventListener('click', hideVideoBubble);
+  $('videoPopBackdrop')?.addEventListener('click', closeVideoPop);
   $('shareSheet').addEventListener('click', (e) => { const b = e.target.closest('[data-share]'); if (b) shareRates(b.dataset.share); });
   $('updateClose').addEventListener('click', () => { $('updateBar').hidden = true; });
   $('chartWhat').addEventListener('click', (e) => {
@@ -1540,7 +1623,6 @@ function init() {
   $('updLater').addEventListener('click', () => { if (apkInfo) store.set(LS.updSkip, apkInfo.versionCode); closeUpdModal(); });
   $('updBackdrop').addEventListener('click', () => { if (!apkReady) closeUpdModal(); });
   $('appVersion').addEventListener('click', onVersionTap);
-  $('tipClose').addEventListener('click', () => { store.set(LS.tipHiddenAt, Date.now()); $('tipCard').hidden = true; });
 
   // الإعدادات (المصدر: مخفية إلا بعد 7 نقرات على الإصدار)
   $('saveSettings').addEventListener('click', () => {
@@ -1601,6 +1683,7 @@ function init() {
   // زر الرجوع في أندرويد
   P('App')?.addListener('backButton', () => {
     if (drawerOpen()) return closeDrawer();
+    if ($('videoPop') && !$('videoPop').hidden) return closeVideoPop();
     if (!$('shareSheet').hidden) return closeShareSheet();
     if (!$('updModal').hidden) return closeUpdModal();
     if (currentView === 'order') return go('settings');
@@ -1609,10 +1692,18 @@ function init() {
     P('App').exitApp();
   });
 
+  async function checkOpenFromUpdateNotification() {
+    try {
+      const r = await P('SarrafNative')?.consumeOpenUpdate?.();
+      if (r?.open) checkApkUpdate(true);
+    } catch {}
+  }
+
   window.addEventListener('online', () => { refresh(); loadTip(); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     syncFromBackground();
+    checkOpenFromUpdateNotification();
     if (Date.now() - lastAttemptAt >= nextDelay() - 5000) refresh();
     if (currentView === 'settings') fillSettings();
     if (waitingInstallPerm && apkReady) { waitingInstallPerm = false; installDownloaded(); }
@@ -1624,6 +1715,7 @@ function init() {
   setupOrder();
   setupPullToRefresh();
   setupLongPress();
+  setupVideoBubble();
   render(false);
   syncFromBackground().finally(() => refresh());
   loadTip();
@@ -1631,8 +1723,8 @@ function init() {
   setupNotifyPrompt();
   pushRunnerSettings();
   if (notifySettings().enabled) pushMorning();
-  // التحديث الهوائي: الواجهة اشتغلت تمام → نثبّتها (بدون هالإشارة بترجع للنسخة القديمة بالفتح الجاي)
   P('SarrafNative')?.otaReady().catch(() => {});
+  checkOpenFromUpdateNotification();
   setTimeout(checkUpdates, 4000);
   setTimeout(() => checkApkUpdate(false), 2500);
   setInterval(checkUpdates, 6 * 3600e3);

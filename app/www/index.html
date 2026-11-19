@@ -36,6 +36,26 @@
       <button id="updateClose" class="ub-close" aria-label="إخفاء">×</button>
     </div>
 
+    <!-- زر فيديو الأسبوع العائم (أعلى الشاشة، قابل للسحب مثل فقاعة الماسنجر) -->
+    <button id="videoBubble" type="button" class="video-bubble press" aria-label="فيديو الأسبوع" hidden>
+      <span class="vb-ring" aria-hidden="true"></span>
+      <span class="vb-play" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l11.02-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14z"/></svg>
+      </span>
+      <span id="vbDot" class="vb-dot" aria-hidden="true">1</span>
+    </button>
+    <div id="videoPopBackdrop" class="drawer-backdrop" hidden></div>
+    <section id="videoPop" class="video-pop" role="dialog" aria-modal="true" aria-label="فيديو الأسبوع" hidden>
+      <button id="wvClose" class="tip-close" aria-label="إخفاء الفيديو">×</button>
+      <div class="tip-title wv-head">🎬 فيديو الأسبوع · <span>عبد السلام ثلجة</span></div>
+      <h3 id="wvTitle" class="wv-title"></h3>
+      <p id="wvDesc" class="muted small wv-desc" hidden></p>
+      <div class="row-btns">
+        <button id="wvOpen" class="primary small-btn press wv-btn">▶ شاهد الفيديو الآن</button>
+        <button id="wvHide" class="ghost small-btn press">إخفاء</button>
+      </div>
+    </section>
+
     <main>
       <!-- تبويب سريع -->
       <div class="seg tabs enter" role="tablist" aria-label="نوع التحويل">
@@ -142,8 +162,11 @@
             <div id="gcKarat" class="seg small-seg" role="radiogroup" aria-label="العيار"></div>
           </div>
           <label class="fee-row">
-            <span class="muted small">أجرة الصياغة للغرام <span class="opt">(اختياري)</span></span>
-            <span class="fee-in-wrap"><input id="gcFee" class="calc-in fee-in num-font" type="text" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="أجرة الصياغة للغرام" /><span id="gcFeeSym" class="muted small"></span></span>
+            <span class="muted small">أجرة الصياغة للغرام <span class="opt">(بالدولار)</span></span>
+            <span class="fee-in-wrap">
+              <input id="gcFee" class="calc-in fee-in num-font" type="text" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="أجرة الصياغة للغرام" />
+              <button id="gcFeeCur" type="button" class="fee-cur-btn press" title="تبديل عملة الصياغة">$</button>
+            </span>
           </label>
           <div class="calc-out"><span class="muted small" id="gcUnit">غرام</span><span class="calc-val"><b id="gcResult" class="num-font">—</b> <span id="gcSym" class="muted small"></span></span></div>
           <div id="gcBreak" class="muted small calc-break" hidden></div>
@@ -182,21 +205,6 @@
         </div>
       </section>
 
-      <section id="weeklyVideoCard" class="card video-card" hidden>
-        <button id="wvClose" class="tip-close" aria-label="إخفاء">×</button>
-        <div class="tip-title wv-head">🎬 فيديو الأسبوع · <span>عبد السلام ثلجة</span></div>
-        <h3 id="wvTitle" class="wv-title"></h3>
-        <p id="wvDesc" class="muted small wv-desc" hidden></p>
-        <button id="wvOpen" class="primary small-btn press wv-btn">▶ شاهد الفيديو الآن</button>
-      </section>
-
-      <section id="tipCard" class="card tip-card" hidden>
-        <button id="tipClose" class="tip-close" aria-label="إخفاء">×</button>
-        <div class="tip-title">🩺 معلومة طبية · <span id="tipAuthor">عبد السلام ثلجة</span></div>
-        <p id="tipText"></p>
-        <button id="tipVideo" class="ghost small-btn press">▶ شوف الفيديو</button>
-      </section>
-
       <p class="foot muted small">الأسعار تقريبية من السوق الموازية ولأغراض استرشادية فقط.</p>
     </main>
   </div>
@@ -212,7 +220,7 @@
       <section class="card set-links">
         <button class="set-link press" data-go="order"><span class="ni">↕️</span><span class="sl-t">ترتيب العملات وإخفاؤها</span><span class="chev" aria-hidden="true">‹</span></button>
         <label class="switch-row" style="margin:4px 8px">
-          <span>عرض المعلومة الطبية وفيديو الأسبوع</span>
+          <span>عرض زر فيديو الأسبوع العائم</span>
           <input id="tipsEnabled" type="checkbox" checked />
         </label>
       </section>

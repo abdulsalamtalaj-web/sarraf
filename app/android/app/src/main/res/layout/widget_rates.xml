@@ -1,27 +1,177 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ويدجت 4×2: أول 3 عملات حسب ترتيب المستخدم + غرام 21 + وقت التحديث -->
+<!-- ويدجت 4×2 احترافية: شبكة 2×2 من البطاقات (دولار/سوري، تركي/سوري، يورو/سوري، ذهب 21 بالدولار + سوري) + تحديث فوري -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent"
-    android:orientation="vertical" android:layoutDirection="rtl" android:padding="12dp" android:background="@drawable/widget_bg">
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
-        <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@mipmap/ic_launcher_round" android:contentDescription="@null" />
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="6dp" android:text="صرّاف" android:textColor="#F5C542" android:textSize="14sp" android:textStyle="bold" />
-        <TextView android:id="@+id/w_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#94A39B" android:textSize="12sp" />
+    android:id="@+id/w_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:layoutDirection="rtl"
+    android:padding="10dp"
+    android:background="@drawable/widget_bg">
+
+    <!-- الترويسة -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="6dp">
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@mipmap/ic_launcher_round"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="صرّاف"
+            android:textColor="#F5C542"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/w_time"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="6dp"
+            android:gravity="left|center_vertical"
+            android:text="—"
+            android:textColor="#94A89E"
+            android:textSize="11sp"
+            android:maxLines="1" />
+
+        <TextView
+            android:id="@+id/w_refresh"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:gravity="center"
+            android:background="@drawable/widget_btn_refresh"
+            android:text="↻"
+            android:textColor="#F5C542"
+            android:textSize="14sp"
+            android:textStyle="bold" />
     </LinearLayout>
-    <LinearLayout android:id="@+id/w_row1" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
-        <TextView android:id="@+id/w_l1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#C9D3CE" android:textSize="13sp" android:maxLines="1" />
-        <TextView android:id="@+id/w_v1" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="left|center_vertical" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" />
+
+    <!-- الصف الأول: الدولار + التركي -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal">
+
+        <!-- بطاقة الدولار / سوري -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_vertical"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:background="@drawable/widget_tile">
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+                <ImageView android:layout_width="3dp" android:layout_height="12dp" android:src="@drawable/widget_bar_usd" android:contentDescription="@null" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="5dp" android:text="الدولار · سوري" android:textColor="#9BB6E8" android:textSize="11sp" android:textStyle="bold" android:maxLines="1" />
+                <TextView android:id="@+id/w_usd_arrow" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="11sp" android:textStyle="bold" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="2dp">
+                <TextView android:id="@+id/w_usd_b" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text=" · " android:textColor="#6C8277" android:textSize="13sp" />
+                <TextView android:id="@+id/w_usd_s" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:textColor="#B4C6BD" android:textSize="14sp" android:textStyle="bold" android:maxLines="1" />
+            </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="شراء · مبيع (ل.س جديدة)" android:textColor="#7D9187" android:textSize="9sp" android:maxLines="1" />
+        </LinearLayout>
+
+        <!-- بطاقة التركي / سوري -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:orientation="vertical"
+            android:gravity="center_vertical"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:background="@drawable/widget_tile">
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+                <ImageView android:layout_width="3dp" android:layout_height="12dp" android:src="@drawable/widget_bar_try" android:contentDescription="@null" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="5dp" android:text="التركي · سوري" android:textColor="#F4A5A5" android:textSize="11sp" android:textStyle="bold" android:maxLines="1" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="2dp">
+                <TextView android:id="@+id/w_try_b" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text=" · " android:textColor="#6C8277" android:textSize="13sp" />
+                <TextView android:id="@+id/w_try_s" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:textColor="#B4C6BD" android:textSize="14sp" android:textStyle="bold" android:maxLines="1" />
+            </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="شراء · مبيع (ل.س جديدة)" android:textColor="#7D9187" android:textSize="9sp" android:maxLines="1" />
+        </LinearLayout>
     </LinearLayout>
-    <LinearLayout android:id="@+id/w_row2" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
-        <TextView android:id="@+id/w_l2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#C9D3CE" android:textSize="13sp" android:maxLines="1" />
-        <TextView android:id="@+id/w_v2" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="left|center_vertical" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" />
-    </LinearLayout>
-    <LinearLayout android:id="@+id/w_row3" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
-        <TextView android:id="@+id/w_l3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#C9D3CE" android:textSize="13sp" android:maxLines="1" />
-        <TextView android:id="@+id/w_v3" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="left|center_vertical" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" />
-    </LinearLayout>
-    <LinearLayout android:id="@+id/w_rowg" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="غرام 21 (ل.س)" android:textColor="#C9D3CE" android:textSize="13sp" />
-        <TextView android:id="@+id/w_gold" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="left|center_vertical" android:textDirection="ltr" android:textColor="#F5C542" android:textSize="16sp" android:textStyle="bold" />
+
+    <!-- الصف الثاني: اليورو + الذهب عيار 21 بالدولار -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal">
+
+        <!-- بطاقة اليورو / سوري -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_vertical"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:background="@drawable/widget_tile">
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+                <ImageView android:layout_width="3dp" android:layout_height="12dp" android:src="@drawable/widget_bar_eur" android:contentDescription="@null" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="5dp" android:text="اليورو · سوري" android:textColor="#C4B5FD" android:textSize="11sp" android:textStyle="bold" android:maxLines="1" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="2dp">
+                <TextView android:id="@+id/w_eur_b" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:textColor="#EEF4F0" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text=" · " android:textColor="#6C8277" android:textSize="13sp" />
+                <TextView android:id="@+id/w_eur_s" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:textColor="#B4C6BD" android:textSize="14sp" android:textStyle="bold" android:maxLines="1" />
+            </LinearLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="شراء · مبيع (ل.س جديدة)" android:textColor="#7D9187" android:textSize="9sp" android:maxLines="1" />
+        </LinearLayout>
+
+        <!-- بطاقة الذهب عيار 21 (بالدولار + المقابل بالسوري) -->
+        <LinearLayout
+            android:id="@+id/w_rowg"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:orientation="vertical"
+            android:gravity="center_vertical"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:background="@drawable/widget_tile_gold">
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+                <ImageView android:layout_width="3dp" android:layout_height="12dp" android:src="@drawable/widget_bar_gold" android:contentDescription="@null" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="5dp" android:text="غرام ذهب 21" android:textColor="#F5C542" android:textSize="11sp" android:textStyle="bold" android:maxLines="1" />
+                <TextView android:id="@+id/w_gold_tag" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="" android:textColor="#D9C379" android:textSize="9sp" android:maxLines="1" />
+            </LinearLayout>
+            <TextView android:id="@+id/w_gold_usd" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textDirection="ltr" android:gravity="right" android:textColor="#F5C542" android:textSize="16sp" android:textStyle="bold" android:maxLines="1" android:layout_marginTop="2dp" />
+            <TextView android:id="@+id/w_gold_syp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#D4C79A" android:textSize="9sp" android:maxLines="1" />
+        </LinearLayout>
     </LinearLayout>
 </LinearLayout>

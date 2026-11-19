@@ -40,20 +40,40 @@
             </intent-filter>
         </receiver>
 
-        <!-- ويدجت صغيرة 2×1: الدولار -->
-        <receiver android:name=".RatesWidgetSmall" android:exported="false" android:label="صرّاف – الدولار">
+        <!-- ويدجت صغيرة 2×1: الدولار (شراء ومبيع) -->
+        <receiver android:name=".RatesWidgetSmall" android:exported="false" android:label="صرّاف – الدولار (2×1)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.liraconverter.app.WIDGET_REFRESH" />
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_small_info" />
         </receiver>
 
-        <!-- ويدجت متوسطة 4×2 -->
-        <receiver android:name=".RatesWidget" android:exported="false" android:label="صرّاف – الأسعار">
+        <!-- ويدجت شريط سريع 4×1: دولار + تركي + ذهب 21 بالدولار -->
+        <receiver android:name=".RatesWidgetBar" android:exported="false" android:label="صرّاف – شريط سريع (4×1)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.liraconverter.app.WIDGET_REFRESH" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_bar_info" />
+        </receiver>
+
+        <!-- ويدجت متوسطة 4×2: بطاقات 2×2 -->
+        <receiver android:name=".RatesWidget" android:exported="false" android:label="صرّاف – بطاقات الأسعار (4×2)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.liraconverter.app.WIDGET_REFRESH" />
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_rates_info" />
+        </receiver>
+
+        <!-- ويدجت كاملة 4×3: لوحة السوق والذهب بالدولار -->
+        <receiver android:name=".RatesWidgetFull" android:exported="false" android:label="صرّاف – لوحة السوق (4×3)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.liraconverter.app.WIDGET_REFRESH" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_full_info" />
         </receiver>
 
         <provider
