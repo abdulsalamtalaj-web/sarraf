@@ -1,7 +1,7 @@
 {
-  "versionCode": 18,
-  "versionName": "3.3.8",
-  "apkUrl": "https://github.com/abdulsalamtalaj-web/sarraf/releases/download/v3.3.8/sarraf.apk",
-  "notes": "إصلاح نهائي لخطأ سعر 36/72: تطهير الكاش القديم (parser_v=2)، فك كل كيانات HTML، وتوحيد الحوالات والويدجت",
-  "date": "2026-11-25T18:28:49.873Z"
+  "versionCode": 19,
+  "versionName": "3.3.9",
+  "apkUrl": "https://github.com/abdulsalamtalaj-web/sarraf/releases/download/v3.3.9/sarraf.apk",
+  "notes": "تحصين صرّاف للضغط العالي: كاش حوالات 6 ساعات، نوافذ CDN موحّدة، Jitter/Backoff، وSingle-Flight + Edge Cache للخادم",
+  "date": "2026-11-25T18:35:48.606Z"
 }
