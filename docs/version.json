@@ -1,7 +1,7 @@
 {
-  "versionCode": 16,
-  "versionName": "3.3.6",
-  "apkUrl": "https://github.com/abdulsalamtalaj-web/sarraf/releases/download/v3.3.6/sarraf.apk",
-  "notes": "إصلاح الزر العائم لفيديو الأسبوع: نقر فوري مضمون على شاشات اللمس، ظهور فوري من الكاش، وفصله عن السحب",
-  "date": "2026-11-19T23:40:55.812Z"
+  "versionCode": 17,
+  "versionName": "3.3.7",
+  "apkUrl": "https://github.com/abdulsalamtalaj-web/sarraf/releases/download/v3.3.7/sarraf.apk",
+  "notes": "إصلاح جذري: إخفاء زر الفيديو بعد المشاهدة، الذهب حصراً من تلغرام/واتساب، منع التجمّد بلا نت، ودقة الأسعار من أول فتح",
+  "date": "2026-11-25T18:12:41.281Z"
 }
