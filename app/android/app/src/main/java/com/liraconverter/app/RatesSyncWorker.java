@@ -12,7 +12,9 @@ import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.pm.PackageInfoCompat;
+import androidx.work.BackoffPolicy;
 import androidx.work.Constraints;
+import androidx.work.Data;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.NetworkType;
@@ -65,6 +67,7 @@ public class RatesSyncWorker extends Worker {
                 .build();
             PeriodicWorkRequest req = new PeriodicWorkRequest.Builder(RatesSyncWorker.class, 15, TimeUnit.MINUTES)
                 .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
                 .build();
             WorkManager.getInstance(c.getApplicationContext())
                 .enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, req);
@@ -79,8 +82,10 @@ public class RatesSyncWorker extends Worker {
             Constraints constraints = new Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build();
+            Data data = new Data.Builder().putBoolean("manual", true).build();
             OneTimeWorkRequest req = new OneTimeWorkRequest.Builder(RatesSyncWorker.class)
                 .setConstraints(constraints)
+                .setInputData(data)
                 .build();
             WorkManager.getInstance(c.getApplicationContext())
                 .enqueueUniqueWork(WORK_NOW, ExistingWorkPolicy.REPLACE, req);
@@ -94,14 +99,21 @@ public class RatesSyncWorker extends Worker {
     public Result doWork() {
         Context c = getApplicationContext();
         try {
-            JSONObject settings = SarrafData.runnerJson(c, "settings");
-            String apiUrl = settings == null ? "" : settings.optString("apiUrl", "").trim();
-            boolean ok = false;
-            if (apiUrl.startsWith("https://")) {
-                try { ok = fetchFromWorker(c, apiUrl); } catch (Exception e) { Log.w(TAG, "worker fetch err", e); }
-            }
-            if (!ok) {
-                try { fetchDirectFallback(c, settings); } catch (Exception e) { Log.w(TAG, "direct fallback err", e); }
+            boolean manual = getInputData().getBoolean("manual", false);
+            JSONObject cur = SarrafData.runnerJson(c, "lastRates");
+            long curFetched = cur != null && SarrafData.isSaneRates(cur) ? SarrafData.parseIso(cur.optString("fetched", null)) : 0;
+            // في الفحص الدوري (غير اليدوي): إذا تم جلب نشرة صالحة قبل أقل من 10 دقائق لا نكرر الضغط على المصادر
+            boolean needFetch = manual || curFetched == 0 || (System.currentTimeMillis() - curFetched) >= 10L * 60_000L;
+            if (needFetch) {
+                JSONObject settings = SarrafData.runnerJson(c, "settings");
+                String apiUrl = settings == null ? "" : settings.optString("apiUrl", "").trim();
+                boolean ok = false;
+                if (apiUrl.startsWith("https://")) {
+                    try { ok = fetchFromWorker(c, apiUrl, manual); } catch (Exception e) { Log.w(TAG, "worker fetch err", e); }
+                }
+                if (!ok) {
+                    try { fetchDirectFallback(c, settings, manual); } catch (Exception e) { Log.w(TAG, "direct fallback err", e); }
+                }
             }
             RatesWidget.updateAll(c);
             // فحص التحديثات الجديدة وإرسال إشعار لكل المستخدمين عند صدور إصدار أحدث
@@ -192,16 +204,17 @@ public class RatesSyncWorker extends Worker {
         }
     }
 
-    private boolean fetchFromWorker(Context c, String apiUrl) throws Exception {
+    private boolean fetchFromWorker(Context c, String apiUrl, boolean manual) throws Exception {
         String sep = apiUrl.contains("?") ? "&" : "?";
-        JSONObject fresh = new JSONObject(httpGet(apiUrl + sep + "bg=1&_t=" + System.currentTimeMillis()));
+        String tok = manual ? ("_t=" + System.currentTimeMillis()) : ("_b=" + (System.currentTimeMillis() / 30_000L));
+        JSONObject fresh = new JSONObject(httpGet(apiUrl + sep + "bg=1&" + tok));
         if (!fresh.has("usd_syp")) return false;
         saveFreshRates(c, fresh);
         return true;
     }
 
     /** جلب احتياطي مباشر من قنوات تلغرام (العملات + الذهب من النشرة نفسها، بلا البورصة العالمية) */
-    private void fetchDirectFallback(Context c, JSONObject settings) throws Exception {
+    private void fetchDirectFallback(Context c, JSONObject settings, boolean manual) throws Exception {
         List<String> channels = new ArrayList<>();
         if (settings != null) {
             JSONArray arr = settings.optJSONArray("channels");
@@ -221,11 +234,11 @@ public class RatesSyncWorker extends Worker {
         long bestRatesPost = 0;
         JSONObject bestGold = null;
         long bestGoldPost = 0;
-        long bust = System.currentTimeMillis();
+        String tok = manual ? ("_t=" + System.currentTimeMillis()) : ("_b=" + (System.currentTimeMillis() / 30_000L));
 
         for (String ch : channels) {
             try {
-                String html = httpGet("https://t.me/s/" + ch + "?_t=" + bust);
+                String html = httpGet("https://t.me/s/" + ch + "?" + tok);
                 String[] blocks = html.split("tgme_widget_message_wrap");
                 JSONObject chRates = null;
                 long chRatesPost = 0;
@@ -557,10 +570,17 @@ public class RatesSyncWorker extends Worker {
     private void checkNewVersionAndNotify(Context c) {
         try {
             long lastCheck = SarrafData.prefs(c).getLong("lastUpdCheckAt", 0);
-            if (System.currentTimeMillis() - lastCheck < UPDATE_CHECK_INTERVAL_MS) return;
+            // تشتيت عشوائي (0-30 دقيقة لكل جهاز) + نافذة CDN 15 دقيقة حتى يتحمّل GitHub Pages عشرات الآلاف من المستخدمين
+            long jitter = SarrafData.prefs(c).getLong("updJitterMs", -1);
+            if (jitter < 0) {
+                jitter = (long) (Math.random() * 30L * 60_000L);
+                SarrafData.prefs(c).edit().putLong("updJitterMs", jitter).apply();
+            }
+            if (System.currentTimeMillis() - lastCheck < UPDATE_CHECK_INTERVAL_MS + jitter) return;
             SarrafData.prefs(c).edit().putLong("lastUpdCheckAt", System.currentTimeMillis()).apply();
 
-            JSONObject v = new JSONObject(httpGet(VERSION_URL + "?t=" + System.currentTimeMillis()));
+            long bucket = System.currentTimeMillis() / (15L * 60_000L);
+            JSONObject v = new JSONObject(httpGet(VERSION_URL + "?t=" + bucket));
             long remoteVc = v.optLong("versionCode", 0);
             long myVc = PackageInfoCompat.getLongVersionCode(c.getPackageManager().getPackageInfo(c.getPackageName(), 0));
             if (remoteVc <= myVc) return;

@@ -57,13 +57,14 @@ async function fetchTimed(url, ms) {
   ]);
 }
 
+const FX_CACHE_MS = 6 * 3600 * 1000;
 async function getRates(s) {
-  const bust = '_t=' + Date.now();
+  const bucket = '_b=' + Math.floor(Date.now() / 30000);
   // الـ Worker أولاً؛ القراءة المباشرة من تليجرام احتياط فقط
   if (s.apiUrl) {
     try {
       const sep = s.apiUrl.indexOf('?') >= 0 ? '&' : '?';
-      const res = await fetchTimed(s.apiUrl + sep + bust, 8000);
+      const res = await fetchTimed(s.apiUrl + sep + bucket, 8000);
       if (res.ok) {
         const d = await res.json();
         if (d && d.usd_syp) return d;
@@ -71,14 +72,23 @@ async function getRates(s) {
     } catch (e) { /* ننتقل للقراءة المباشرة */ }
   }
   const page = async (ch) => {
-    const res = await fetchTimed('https://t.me/s/' + encodeURIComponent(ch) + '?' + bust, 9000);
+    const res = await fetchTimed('https://t.me/s/' + encodeURIComponent(ch) + '?' + bucket, 9000);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.text();
   };
   const fx = async () => {
-    const res = await fetchTimed('https://open.er-api.com/v6/latest/USD', 7000);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return (await res.json()).rates;
+    const cached = kvGet('fxCache');
+    if (cached && cached.rates && cached.at && (Date.now() - cached.at) < FX_CACHE_MS) return cached.rates;
+    try {
+      const res = await fetchTimed('https://open.er-api.com/v6/latest/USD', 7000);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const rates = (await res.json()).rates;
+      if (rates) kvSet('fxCache', { at: Date.now(), rates });
+      return rates;
+    } catch (e) {
+      if (cached && cached.rates) return cached.rates;
+      throw e;
+    }
   };
   const last = kvGet('lastRates');
   const d = await buildRates(s.channels || ['exchange_Currencyy', 'aboothman33'], page, fx, {

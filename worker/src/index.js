@@ -17,7 +17,9 @@ import ADMIN_HTML from './admin.html';
 
 const CACHE_SECONDS = 60;
 const KV_FRESH_MS = 5 * 60 * 1000;   // نعيد استخدام آخر نشرة محفوظة في KV لـ 5 دقائق
+const KV_MIN_WRITE_MS = 15 * 60 * 1000; // حماية حد الكتابة المجاني في Cloudflare KV (1000 كتابة/يوم)
 const MEM_FRESH_MS = 45 * 1000;      // كاش بالذاكرة يعمل حتى على workers.dev
+const FX_MEM_MS = 6 * 3600 * 1000;   // كاش أسعار الصرف العالمية 6 ساعات بالذاكرة
 const HISTORY_DAYS = 30;
 const KEYS = {
   history: 'history_v1',
@@ -35,13 +37,17 @@ const CORS = {
 };
 
 let memCache = null;
+let inFlightCompute = null; // تجميع الطلبات المتزامنة (Single-Flight): 10,000 طلب متزامن = طلب واحد فقط لتلغرام!
+let fxMemCache = null;
+let lastKvWriteAt = 0;
+let lastKvSig = '';
 
 function json(body, status = 200, extra = {}) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': `public, max-age=${CACHE_SECONDS}`,
+      'Cache-Control': `public, max-age=45, s-maxage=${CACHE_SECONDS}, stale-while-revalidate=120`,
       ...CORS,
       ...extra,
     },
@@ -148,8 +154,26 @@ async function pushPending(env, item) {
   return next;
 }
 
-// التجميع المركزي الكامل: يدمج التصحيح اليدوي + واتساب + قنوات تلغرام مع قواعد الحداثة والفحص
-export async function computeRates(env) {
+// التجميع المركزي الكامل مع Single-Flight (يمنع ضغط القطيع Thundering Herd تحت الضغط العالي)
+export async function computeRates(env, forceNew = false) {
+  if (!forceNew && inFlightCompute) return inFlightCompute;
+  const run = _computeRatesInner(env);
+  if (!forceNew) inFlightCompute = run;
+  try { return await run; }
+  finally { if (inFlightCompute === run) inFlightCompute = null; }
+}
+
+async function fetchFxWorkerCached(fxApiUrl) {
+  if (fxMemCache && Date.now() - fxMemCache.t < FX_MEM_MS) return fxMemCache.rates;
+  const res = await fetch(fxApiUrl, { headers: { 'User-Agent': 'Sarraf-Worker/1.0' }, cf: { cacheTtl: 21600 } });
+  if (!res.ok) throw new Error(`FX HTTP ${res.status}`);
+  const d = await res.json();
+  if (d.result !== 'success' || !d.rates) throw new Error('FX bad response');
+  fxMemCache = { t: Date.now(), rates: d.rates };
+  return d.rates;
+}
+
+async function _computeRatesInner(env) {
   const cfg = await getConfig(env);
   const extraSources = [];
   const waPriority = cfg.primary === 'whatsapp' ? 1 : 50;
@@ -190,10 +214,10 @@ export async function computeRates(env) {
 
   const activeChannels = cfg.channels.filter((ch) => !cfg.disabled_channels.includes(ch));
   const last = await lastSaved(env);
-  const body = await buildRates(activeChannels, null, null, {
+  const fxUrl = env.FX_API || DEFAULTS.FX_API;
+  const body = await buildRates(activeChannels, null, () => fetchFxWorkerCached(fxUrl), {
     GOLD_CHANNELS: env.GOLD_CHANNELS || '',
-    GOLD_API: env.GOLD_API || DEFAULTS.GOLD_API,
-    FX_API: env.FX_API || DEFAULTS.FX_API,
+    FX_API: fxUrl,
     last,
     extraSources,
   });
@@ -215,7 +239,13 @@ export async function computeRates(env) {
 
   if (!body.error) {
     memCache = { t: Date.now(), body };
-    await kvPut(env, KEYS.latest, body);
+    // نكتب في KV فقط إذا تغيّر السعر/النشرة أو مضت 15 دقيقة (يحمي حد Cloudflare KV المجاني حتى مع مليون مستخدم!)
+    const sig = JSON.stringify([body.usd_syp, body.try_syp, body.eur_syp, body.gold?.usd, body.post_time, body.gold?.post_time]);
+    if (sig !== lastKvSig || (Date.now() - lastKvWriteAt) >= KV_MIN_WRITE_MS) {
+      lastKvSig = sig;
+      lastKvWriteAt = Date.now();
+      await kvPut(env, KEYS.latest, body);
+    }
   }
   return body;
 }
@@ -452,6 +482,14 @@ export default {
 
     if (url.pathname !== '/' && url.pathname !== '/rates') return json({ error: 'not found' }, 404);
 
+    // 0) كاش Cloudflare Edge (يخدم مئات الآلاف من الطلبات المتزامنة من الذاكرة العالمية بدون استهلاك KV أو CPU)
+    const edgeCache = typeof caches !== 'undefined' ? caches.default : null;
+    const edgeKey = new Request(url.origin + '/rates', { method: 'GET' });
+    if (edgeCache && !url.searchParams.has('_t')) {
+      const hit = await edgeCache.match(edgeKey);
+      if (hit) return hit;
+    }
+
     // 1) كاش بالذاكرة (سريع ويعمل حتى على workers.dev)
     if (memCache && Date.now() - memCache.t < MEM_FRESH_MS) return json(memCache.body);
 
@@ -459,18 +497,22 @@ export default {
     const cached = await kvGet(env, KEYS.latest, null);
     if (cached?.usd_syp && cached.fetched && Date.now() - Date.parse(cached.fetched) < KV_FRESH_MS) {
       memCache = { t: Date.now(), body: cached };
-      return json(cached);
+      const resp = json(cached);
+      if (edgeCache) ctx.waitUntil(edgeCache.put(edgeKey, resp.clone()).catch(() => {}));
+      return resp;
     }
 
-    // 3) جلب جديد وتخزينه في KV
+    // 3) جلب جديد (مع Single-Flight) وتخزينه في KV وEdge Cache
     const body = await computeRates(env);
     if (body.error) {
-      // إذا فشل الجلب الجديد ولكن لدينا نشرة سابقة محفوظة نرجعها مع وسم cached_fallback بدل قطع الخدمة
+      // إذا فشل الجلب الجديد ولكن لدينا نشرة سابقة محفوظة نرجعها مع وسم stale_fallback بدل قطع الخدمة
       if (cached?.usd_syp) return json({ ...cached, stale_fallback: true, last_error: body.error }, 200, { 'Cache-Control': 'no-store' });
       return json(body, 502, { 'Cache-Control': 'no-store' });
     }
     if (env.HISTORY) ctx.waitUntil(readHistory(env).then((h) => (h.length ? null : snapshot(env))).catch(() => {}));
-    return json(body);
+    const resp = json(body);
+    if (edgeCache) ctx.waitUntil(edgeCache.put(edgeKey, resp.clone()).catch(() => {}));
+    return resp;
   },
 
   async scheduled(event, env, ctx) {

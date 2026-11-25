@@ -24,12 +24,15 @@ await check('لوحة الإدارة تحتوي على: لصق واتساب + ا
 
 // 2) تحقق من صحة صيغة worker/src/index.js (استيراداته وبنيته)
 const workerSrc = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
-await check('خادم Worker يتضمن مسارات /admin و /admin/api/* و /ingest/whatsapp و KV cache', async () => {
+await check('خادم Worker يتضمن مسارات /admin و /admin/api/* و /ingest/whatsapp و KV cache وحماية الضغط العالي', async () => {
   assert.match(workerSrc, /\/ingest\/whatsapp/);
   assert.match(workerSrc, /\/admin\/api\//);
   assert.match(workerSrc, /latest_rates_v1/);
   assert.match(workerSrc, /stale_fallback/);
   assert.match(workerSrc, /timingSafeEq/);
+  assert.match(workerSrc, /inFlightCompute/);
+  assert.match(workerSrc, /caches\.default/);
+  assert.match(workerSrc, /KV_MIN_WRITE_MS/);
 });
 
 // 3) اختبار أولوية الاعتماد اليدوي فوق كل المصادر

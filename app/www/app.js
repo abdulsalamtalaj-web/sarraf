@@ -29,7 +29,7 @@ const LS = {
   remote: 'sarraf.remoteConfig', otaReady: 'sarraf.otaReadyBuild', otaPath: 'sarraf.otaPath',
   order: 'sarraf.order', gcDir: 'sarraf.gcDir', change: 'sarraf.change', updSkip: 'sarraf.updSkip',
   tipsOn: 'sarraf.tipsOn', wvDismissed: 'sarraf.wvDismissedV2', wvPos: 'sarraf.wvPos', wvCache: 'sarraf.wvCache',
-  runnerSig: 'sarraf.runnerSig',
+  runnerSig: 'sarraf.runnerSig', fxCache: 'sarraf.fxCache', lastUpdAt: 'sarraf.lastUpdAt', lastTipAt: 'sarraf.lastTipAt',
 };
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -347,31 +347,50 @@ async function fetchWithTimeout(url, ms = 8500, extraOpts = {}) {
     clearTimeout(timerId);
   }
 }
+const FX_CACHE_MS = 6 * 3600 * 1000; // أسعار الصرف العالمية للحوالات تتحدث يومياً: كاش 6 ساعات يقلل الضغط 98%
+async function fetchFxCached() {
+  const cached = store.get(LS.fxCache);
+  if (cached && cached.rates && cached.at && (Date.now() - cached.at) < FX_CACHE_MS) {
+    return cached.rates;
+  }
+  try {
+    const res = await fetchWithTimeout('https://open.er-api.com/v6/latest/USD', 6000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+    if (j && j.rates) {
+      store.set(LS.fxCache, { at: Date.now(), rates: j.rates });
+      return j.rates;
+    }
+  } catch (e) {
+    if (cached && cached.rates) return cached.rates; // احتياط من الكاش عند تعذّر الشبكة
+    throw e;
+  }
+  return cached?.rates || null;
+}
+
 class SuspectError extends Error { constructor(msg, rejected, fromWorker) { super(msg); this.rejected = rejected; this.fromWorker = fromWorker; } }
-async function fetchFromWorker(url) {
-  const res = await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now(), 8000);
+async function fetchFromWorker(url, manual = false) {
+  // في التحديث التلقائي نستخدم نافذة 30 ثانية حتى يستفيد CDN/Cloudflare Edge من الكاش لمئات الآلاف من المستخدمين
+  const tok = manual ? `_t=${Date.now()}` : `_b=${Math.floor(Date.now() / 30000)}`;
+  const res = await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + tok, 8000);
   let d = null;
   try { d = await res.json(); } catch { throw new Error('worker bad json ' + res.status); }
   if (d && d.rejected && !d.usd_syp) throw new SuspectError(d.error, d.rejected, true); // الـ Worker شغال بس السعر مشبوه
   if (!res.ok || !isValidRates(d)) throw new Error('worker ' + res.status);
   return d;
 }
-async function fetchDirect() {
-  const bust = Date.now();
+async function fetchDirect(manual = false) {
+  // في التحديث التلقائي نجمع الطلبات ضمن نافذة 30 ثانية؛ وفي السحب اليدوي كسر كاش فوري
+  const tok = manual ? `_t=${Date.now()}` : `_b=${Math.floor(Date.now() / 30000)}`;
   const page = async (ch) => {
-    const res = await fetchWithTimeout(`https://t.me/s/${encodeURIComponent(ch)}?_t=${bust}`, 8500);
+    const res = await fetchWithTimeout(`https://t.me/s/${encodeURIComponent(ch)}?${tok}`, 8500);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
-  };
-  const fx = async () => {
-    const res = await fetchWithTimeout('https://open.er-api.com/v6/latest/USD', 6000);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()).rates;
   };
   const last = isValidRates(state.rates)
     ? { usd_syp: state.rates.usd_syp, post_time: state.rates.post_time, fetched: state.lastOkAt }
     : null;
-  const d = await buildRates(channels(), page, fx, { GOLD_CHANNELS: CFG.GOLD_CHANNELS || '', last });
+  const d = await buildRates(channels(), page, fetchFxCached, { GOLD_CHANNELS: CFG.GOLD_CHANNELS || '', last });
   if (d.error) { if (d.rejected) throw new SuspectError(d.error, d.rejected, false); throw new Error(d.error); }
   return d;
 }
@@ -419,9 +438,15 @@ async function syncFromBackground() {
 const sameRates = (a, b) => a && b && RATE_ROWS.every(({ key }) => a[key]?.buy === b[key]?.buy && a[key]?.sell === b[key]?.sell);
 const goldSig = (r) => JSON.stringify([r?.gold?.usd, r?.gold?.usd_buy, r?.gold?.syp, r?.gold?.syp_buy, r?.usd_syp]);
 
-let firstPaint = true, timer = null, lastAttemptAt = 0, lastDirectAt = 0, fetchSeq = 0, pendingManualRefresh = false;
-const nextDelay = () => (state.via === 'worker' ? WORKER_REFRESH : DIRECT_REFRESH);
-function scheduleNext() { clearTimeout(timer); timer = setTimeout(() => refresh(), nextDelay()); }
+let firstPaint = true, timer = null, lastAttemptAt = 0, lastDirectAt = 0, fetchSeq = 0, pendingManualRefresh = false, failStreak = 0;
+const nextDelay = () => {
+  const base = state.via === 'worker' ? WORKER_REFRESH : DIRECT_REFRESH;
+  // تدرّج ذكي (exponential backoff) عند فشل الشبكة + تشتيت عشوائي (jitter ±15%) لمنع ضغط جماعي متزامن
+  const mult = failStreak > 0 ? Math.min(4, Math.pow(1.6, failStreak)) : 1;
+  const jitter = 0.85 + Math.random() * 0.30;
+  return Math.round(Math.min(10 * 60000, base * mult) * jitter);
+};
+function scheduleNext() { clearTimeout(timer); timer = setTimeout(() => { if (!document.hidden) refresh(); else scheduleNext(); }, nextDelay()); }
 
 async function refresh({ manual = false, force = false } = {}) {
   if (state.loading) {
@@ -450,7 +475,7 @@ async function refresh({ manual = false, force = false } = {}) {
     const api = apiUrl();
     let workerAlive = false;
     if (api) {
-      try { data = await fetchFromWorker(api); state.via = 'worker'; }
+      try { data = await fetchFromWorker(api, manual); state.via = 'worker'; }
       catch (e) { if (e instanceof SuspectError) { workerAlive = true; throw e; } console.warn('worker failed', e); }
     }
     if (!data && !workerAlive) {
@@ -459,7 +484,7 @@ async function refresh({ manual = false, force = false } = {}) {
       if (throttled) { state.via = 'direct'; return; }
       lastDirectAt = Date.now();
       state.via = 'direct';
-      data = await fetchDirect();
+      data = await fetchDirect(manual);
     }
     if (seq !== fetchSeq) return; // تجاهل أي استجابة قديمة وصلت متأخرة بعد طلب أحدث
     if (!isValidRates(data)) throw new Error('invalid rates payload');
@@ -480,6 +505,7 @@ async function refresh({ manual = false, force = false } = {}) {
     state.suspect = null;
     state.lastOkAt = new Date().toISOString();
     state.online = true;
+    failStreak = 0;
     store.set(LS.rates, data);
     store.set(LS.okAt, state.lastOkAt);
     recordHistory(data);
@@ -489,7 +515,7 @@ async function refresh({ manual = false, force = false } = {}) {
   } catch (e) {
     console.warn('refresh failed', e);
     if (e instanceof SuspectError) { state.suspect = e.rejected; state.online = true; }
-    else state.online = false;
+    else { state.online = false; failStreak = Math.min(failStreak + 1, 6); }
   } finally {
     state.loading = false;
     $('ptr').classList.remove('loading', 'pull');
@@ -1009,10 +1035,15 @@ async function myVersionCode() {
 async function checkApkUpdate(manual = false) {
   if (!CFG.VERSION_URL || apkChecking) return;
   if (!isNative) { if (manual) toast('فحص التحديثات بيشتغل جوا التطبيق'); return; }
+  // في الفحص التلقائي نكتفي بمرة كل ساعتين + نافذة CDN 15 دقيقة لتحمّل الضغط العالي على GitHub Pages
+  const lastCheck = store.get(LS.lastUpdAt, 0);
+  if (!manual && Date.now() - lastCheck < 2 * 3600e3) return;
   if (!(await checkOnlineFast())) { if (manual) toast('ما في اتصال بالإنترنت حالياً'); return; }
   apkChecking = true;
   try {
-    const v = await (await fetchWithTimeout(CFG.VERSION_URL + '?t=' + Date.now(), 6000)).json();
+    const q = manual ? Date.now() : Math.floor(Date.now() / 900000);
+    const v = await (await fetchWithTimeout(CFG.VERSION_URL + '?t=' + q, 6000)).json();
+    store.set(LS.lastUpdAt, Date.now());
     const mine = await myVersionCode();
     if (!v || !(v.versionCode > mine) || !v.apkUrl) { if (manual) toast('عندك آخر نسخة ✓'); return; }
     if (!manual && store.get(LS.updSkip) === v.versionCode) return; // "لاحقاً": منرجع نذكّره بالفتح الجاي بس إذا فحص يدوي
@@ -1394,9 +1425,14 @@ async function loadTip() {
   const cached = store.get(LS.wvCache) || (ytFallback ? { title: 'شاهد أحدث فيديو على قناتي', url: ytFallback.url, date: 'channel' } : null);
   if (cached) showWeeklyBubble(cached);
   const url = contentUrl();
-  if (!url || !(await checkOnlineFast())) return;
+  if (!url) return;
+  // تحديث tips.json مرة كل 30 دقيقة كحد أقصى لتقليل الحمل (والكاش يظهر فوراً)
+  const lastTip = store.get(LS.lastTipAt, 0);
+  if (store.get(LS.wvCache) && Date.now() - lastTip < 30 * 60000) return;
+  if (!(await checkOnlineFast())) return;
   try {
     const c = await (await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + 't=' + Math.floor(Date.now() / 300000), 6000)).json();
+    store.set(LS.lastTipAt, Date.now());
     const wv = c && c.weekly_video;
     if (wv && wv.url && /^https?:\/\//i.test(wv.url)) {
       store.set(LS.wvCache, wv);
@@ -1914,8 +1950,9 @@ function init() {
     } catch {}
   }
 
-  window.addEventListener('online', () => { state.online = true; renderStatus(); refresh({ force: true }); loadTip(); });
+  window.addEventListener('online', () => { state.online = true; failStreak = 0; renderStatus(); refresh({ force: true }); loadTip(); });
   window.addEventListener('offline', () => { state.online = false; renderStatus(); });
+  window.addEventListener('unhandledrejection', (e) => { console.warn('async err', e?.reason); e.preventDefault?.(); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     syncFromBackground();
