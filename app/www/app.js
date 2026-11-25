@@ -135,13 +135,33 @@ function goldIn(r, k, cur, mode) {
 }
 
 function isValidRates(r) {
-  return !!(r && r.usd_syp && Number.isFinite(r.usd_syp.buy) && Number.isFinite(r.usd_syp.sell)
-    && r.usd_syp.buy > 0 && r.usd_syp.sell >= r.usd_syp.buy);
+  if (!r || !r.usd_syp) return false;
+  const { buy, sell } = r.usd_syp;
+  if (!Number.isFinite(buy) || !Number.isFinite(sell) || buy < 50 || sell > 2000 || sell < buy) return false;
+  // رفض أي كاش قديم مسموم (مثل 36/36 أو رقم وحيد بدون تركي ويورو)
+  if (Math.abs(buy - sell) < 1e-6 && !r.try_syp && !r.eur_syp) return false;
+  return true;
+}
+function recalcRemit(oldRemit, usdSyp) {
+  if (!oldRemit || !usdSyp) return null;
+  const out = {};
+  for (const [k, item] of Object.entries(oldRemit)) {
+    if (item && Number.isFinite(item.per_usd) && item.per_usd > 0) {
+      out[k] = {
+        buy: Math.round((usdSyp.buy / item.per_usd) * 10000) / 10000,
+        sell: Math.round((usdSyp.sell / item.per_usd) * 10000) / 10000,
+        per_usd: item.per_usd,
+      };
+    }
+  }
+  return Object.keys(out).length ? out : null;
 }
 function sanitizeCachedRates(r) {
   if (!isValidRates(r)) return null;
   // إزالة أي سعر ذهب قديم كان محسوباً من البورصة العالمية (gold-api) حتى يظهر سعر نشرة تلغرام/واتساب مباشرة
   if (r.gold && r.gold.source === 'gold-api') r = { ...r, gold: null };
+  // ضمان توافق عملات الحوالات دائماً مع سعر الدولار المعروض
+  if (r.remit) r = { ...r, remit: recalcRemit(r.remit, r.usd_syp) };
   return r;
 }
 
@@ -382,7 +402,7 @@ async function syncFromBackground() {
         const curGoldTs = Date.parse(state.rates.gold.post_time || '') || 0;
         if (curGoldTs > bgGoldTs) bg.gold = state.rates.gold;
       }
-      if (!bg.remit && state.rates?.remit) bg.remit = state.rates.remit;
+      if (!bg.remit && state.rates?.remit) bg.remit = recalcRemit(state.rates.remit, bg.usd_syp);
       if (state.rates && !sameRates(state.rates, bg)) {
         state.prev = state.rates; store.set(LS.prev, state.prev);
       }
@@ -444,21 +464,14 @@ async function refresh({ manual = false, force = false } = {}) {
     if (seq !== fetchSeq) return; // تجاهل أي استجابة قديمة وصلت متأخرة بعد طلب أحدث
     if (!isValidRates(data)) throw new Error('invalid rates payload');
 
-    // حماية من استبدال نشرة أحدث بنشرة أقدم في حال تأخّر الكاش
-    const newPost = Date.parse(data.post_time || '') || 0;
-    const curPost = Date.parse(state.rates?.post_time || '') || 0;
-    if (!manual && state.rates && newPost > 0 && curPost > 0 && newPost < curPost) {
-      state.online = true;
-      state.lastOkAt = new Date().toISOString();
-      store.set(LS.okAt, state.lastOkAt);
-      return;
-    }
-
     if (state.rates && !sameRates(state.rates, data)) {
       state.prev = state.rates; store.set(LS.prev, state.prev); changed = true;
     }
     if (!data.gold && state.rates?.gold && state.rates.gold.source !== 'gold-api') {
       data.gold = state.rates.gold;
+    }
+    if (!data.remit && state.rates?.remit) {
+      data.remit = recalcRemit(state.rates.remit, data.usd_syp);
     }
     if (state.rates?.gold && data.gold && goldSig(state.rates) !== goldSig(data)) {
       state.prevG = state.rates; store.set(LS.prevG, state.prevG); changed = true;
@@ -471,6 +484,8 @@ async function refresh({ manual = false, force = false } = {}) {
     store.set(LS.okAt, state.lastOkAt);
     recordHistory(data);
     afterNewRates(data);
+    // حفظ النشرة السليمة في كاش الخلفية لتوحيد المصدر بين التطبيق والويدجت وتطهير أي كاش قديم
+    P('SarrafNative')?.syncRatesToBg?.({ ratesJson: JSON.stringify(data) }).catch(() => {});
   } catch (e) {
     console.warn('refresh failed', e);
     if (e instanceof SuspectError) { state.suspect = e.rejected; state.online = true; }

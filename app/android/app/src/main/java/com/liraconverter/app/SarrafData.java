@@ -27,12 +27,26 @@ public final class SarrafData {
     private static final String TAG = "SarrafData";
     public static final String PREFS = "sarraf_native";
     public static final String RUNNER_PREFS = "com.liraconverter.app.daily";
+    public static final int PARSER_VERSION = 2;
     public static final TimeZone DAMASCUS = TimeZone.getTimeZone("GMT+03:00");
 
     private SarrafData() {}
 
     public static SharedPreferences prefs(Context c) { return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE); }
     public static SharedPreferences runner(Context c) { return c.getSharedPreferences(RUNNER_PREFS, Context.MODE_PRIVATE); }
+
+    /** التحقق الصارم من سلامة نشرة الأسعار (تجاهل أي كاش قديم مسموم مثل 36/36 من إصدار 3.3.6) */
+    public static boolean isSaneRates(JSONObject r) {
+        if (r == null) return false;
+        if (r.optInt("parser_v", 0) < PARSER_VERSION) return false;
+        JSONObject usd = r.optJSONObject("usd_syp");
+        if (usd == null) return false;
+        double b = usd.optDouble("buy", Double.NaN);
+        double s = usd.optDouble("sell", Double.NaN);
+        if (Double.isNaN(b) || Double.isNaN(s) || b < 50.0 || s > 2000.0 || b > s) return false;
+        if (Math.abs(b - s) < 1e-6 && !r.has("try_syp") && !r.has("eur_syp")) return false;
+        return true;
+    }
 
     /** فحص فوري (<1ms) لتوفر اتصال شبكة على أندرويد بدون أي طلب DNS قد يجمّد التطبيق */
     public static boolean isNetworkAvailable(Context c) {
@@ -170,7 +184,7 @@ public final class SarrafData {
         if (w == null && r == null) return null;
 
         Snapshot s = new Snapshot();
-        if (w != null) {
+        if (w != null && w.optInt("parser_v", 0) >= PARSER_VERSION) {
             s.at = w.optLong("at", 0);
             s.postAt = w.optLong("postAt", 0);
             s.usdDir = w.optInt("usdDir", 0);
@@ -192,7 +206,7 @@ public final class SarrafData {
             s.goldLocal = w.optBoolean("goldLocal", false);
         }
 
-        if (r != null) {
+        if (r != null && isSaneRates(r)) {
             long rAt = parseIso(r.optString("fetched", null));
             long rPost = parseIso(r.optString("post_time", null));
             // لا نسمح لنشرة خلفية أقدم (من حيث وقت النشرة الفعلي) بالكتابة فوق نشرة أحدث جلبها التطبيق
@@ -206,7 +220,7 @@ public final class SarrafData {
                 if (rPost > 0) s.postAt = rPost;
             }
         }
-        return s;
+        return Double.isNaN(s.usdBuy) ? null : s;
     }
 
     public static String fmt(double v, int dec) {

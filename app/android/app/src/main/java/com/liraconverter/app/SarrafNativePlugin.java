@@ -72,14 +72,34 @@ public class SarrafNativePlugin extends Plugin {
         call.resolve(out);
     }
 
-    /** إرجاع أحدث أسعار تم جلبها في الخلفية (سواء عبر WorkManager أو BackgroundRunner) ليفتح التطبيق بأحدث سعر فوراً */
+    /** إرجاع أحدث أسعار تم جلبها في الخلفية فقط إذا كانت صالحة ومطابقة لإصدار المحلّل الجديد (يطهّر أي كاش قديم مسموم) */
     @PluginMethod
     public void getBackgroundRates(PluginCall call) {
         Context c = getContext();
         JSONObject r = SarrafData.runnerJson(c, "lastRates");
+        if (r != null && !SarrafData.isSaneRates(r)) {
+            SarrafData.runner(c).edit().remove("lastRates").apply();
+            r = null;
+        }
         JSObject out = new JSObject();
         out.put("ratesJson", r != null ? r.toString() : null);
         call.resolve(out);
+    }
+
+    /** حفظ النشرة السليمة التي جلبها التطبيق داخل كاش الخلفية لتوحيد المصدر بين التطبيق والويدجت */
+    @PluginMethod
+    public void syncRatesToBg(PluginCall call) {
+        String raw = call.getString("ratesJson");
+        if (raw != null && !raw.isEmpty()) {
+            try {
+                JSONObject obj = new JSONObject(raw);
+                obj.put("parser_v", SarrafData.PARSER_VERSION);
+                if (SarrafData.isSaneRates(obj)) {
+                    SarrafData.runner(getContext()).edit().putString("lastRates", obj.toString()).apply();
+                }
+            } catch (Exception ignored) { }
+        }
+        call.resolve();
     }
 
     /** {rows:[{key,label,value}], usd, usdDir, g21, goldOn, mode, at, postAt} → الويدجتات (بشكل غير متزامن لمنع تجميد الواجهة) */
@@ -89,6 +109,7 @@ public class SarrafNativePlugin extends Plugin {
         try {
             JSONObject o = new JSONObject(call.getData().toString());
             if (!o.has("at")) o.put("at", System.currentTimeMillis());
+            o.put("parser_v", SarrafData.PARSER_VERSION);
             SarrafData.prefs(c).edit().putString("widget", o.toString()).apply();
         } catch (Exception e) { call.reject(e.getMessage()); return; }
         call.resolve();

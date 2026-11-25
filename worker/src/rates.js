@@ -180,6 +180,7 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
   const gold = await buildGold(data, goldChannels, getPage, null, tried, extraGold);
 
   return {
+    parser_v: 2,
     usd_syp: data.usd_syp,
     try_usd: data.try_usd || null,
     try_syp: data.try_syp || null,

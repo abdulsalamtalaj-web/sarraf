@@ -117,7 +117,7 @@ const SELL_RE = /مبيع|المبيع|بيع|sell/i;
 const KW_RE = /^[^\d]*?(شراء|الشراء|شرا|مبيع|المبيع|بيع|buy|sell)/i;
 
 // نطاقات منطقية (بالليرة الجديدة بعد التحويل) لرفض الأرقام الشاذة
-const RANGE = { usd_syp: [30, 2000], eur_syp: [30, 2500], try_syp: [0.5, 80], try_usd: [5, 300] };
+const RANGE = { usd_syp: [50, 2000], eur_syp: [50, 2500], try_syp: [0.5, 80], try_usd: [5, 300] };
 const inRange = (k, p) => p && p.buy > 0 && p.sell > 0 && p.buy >= RANGE[k][0] && p.sell <= RANGE[k][1];
 
 // تحليل نص النشرة إلى دلاء حسب المدينة: { _: {...}, damascus: {...}, aleppo: {...} }

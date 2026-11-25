@@ -137,11 +137,16 @@ public class RatesSyncWorker extends Worker {
 
     private void saveFreshRates(Context c, JSONObject fresh) {
         try {
+            fresh.put("parser_v", SarrafData.PARSER_VERSION);
+            if (!SarrafData.isSaneRates(fresh)) return;
             JSONObject prev = SarrafData.runnerJson(c, "lastRates");
+            if (prev != null && !SarrafData.isSaneRates(prev)) {
+                prev = null; // تجاهل وتطهير أي كاش قديم مسموم
+            }
             if (prev != null) {
                 long prevPost = SarrafData.parseIso(prev.optString("post_time", null));
                 long newPost = SarrafData.parseIso(fresh.optString("post_time", null));
-                // لا نكتب نشرة أقدم فوق نشرة أحدث محفوظة
+                // لا نكتب نشرة أقدم فوق نشرة أحدث سليمة محفوظة
                 if (prevPost > 0 && newPost > 0 && newPost < prevPost) return;
                 if (!fresh.has("gold") && prev.has("gold")) {
                     JSONObject prevGold = prev.optJSONObject("gold");
@@ -149,8 +154,28 @@ public class RatesSyncWorker extends Worker {
                         fresh.put("gold", prevGold);
                     }
                 }
+                // إعادة حساب عملات الحوالات من per_usd × سعر الدولار الجديد (لا ننسخ أرقاماً قديمة متعارضة أبداً!)
                 if (!fresh.has("remit") && prev.has("remit")) {
-                    fresh.put("remit", prev.get("remit"));
+                    JSONObject prevRemit = prev.optJSONObject("remit");
+                    JSONObject curUsd = fresh.optJSONObject("usd_syp");
+                    if (prevRemit != null && curUsd != null) {
+                        double ub = curUsd.optDouble("buy", Double.NaN), us = curUsd.optDouble("sell", Double.NaN);
+                        JSONObject calcRemit = new JSONObject();
+                        String[] rKeys = { "sar_syp", "aed_syp", "kwd_syp", "jod_syp" };
+                        for (String rk : rKeys) {
+                            JSONObject item = prevRemit.optJSONObject(rk);
+                            if (item == null) continue;
+                            double perUsd = item.optDouble("per_usd", Double.NaN);
+                            if (!Double.isNaN(perUsd) && perUsd > 0 && !Double.isNaN(ub) && !Double.isNaN(us)) {
+                                JSONObject ni = new JSONObject();
+                                ni.put("buy", Math.round((ub / perUsd) * 10000.0) / 10000.0);
+                                ni.put("sell", Math.round((us / perUsd) * 10000.0) / 10000.0);
+                                ni.put("per_usd", perUsd);
+                                calcRemit.put(rk, ni);
+                            }
+                        }
+                        if (calcRemit.length() > 0) fresh.put("remit", calcRemit);
+                    }
                 }
                 if (prev.has("usd_syp")) {
                     JSONObject prevUsd = prev.optJSONObject("usd_syp");
@@ -259,15 +284,38 @@ public class RatesSyncWorker extends Worker {
     }
 
     private static String decodeHtml(String h) {
-        return h
+        String s = h
             .replaceAll("<br\\s*/?>", "\n")
             .replaceAll("</(?:p|div)>", "\n")
-            .replaceAll("<[^>]+>", " ")
-            .replace("&#036;", "$")
-            .replace("&#36;", "$")
+            .replaceAll("<[^>]+>", " ");
+        // فك ترميز جميع كيانات HTML الرقمية (مثل &#036; → $) حتى لا يُقرأ أي كيان كرقم سعر أبداً!
+        Matcher dec = Pattern.compile("&#(\\d+);").matcher(s);
+        StringBuffer sb = new StringBuffer();
+        while (dec.find()) {
+            try {
+                int cp = Integer.parseInt(dec.group(1));
+                dec.appendReplacement(sb, Matcher.quoteReplacement(new String(Character.toChars(cp))));
+            } catch (Exception e) {
+                dec.appendReplacement(sb, "");
+            }
+        }
+        dec.appendTail(sb);
+        Matcher hex = Pattern.compile("&#x([0-9a-fA-F]+);").matcher(sb.toString());
+        StringBuffer sb2 = new StringBuffer();
+        while (hex.find()) {
+            try {
+                int cp = Integer.parseInt(hex.group(1), 16);
+                hex.appendReplacement(sb2, Matcher.quoteReplacement(new String(Character.toChars(cp))));
+            } catch (Exception e) {
+                hex.appendReplacement(sb2, "");
+            }
+        }
+        hex.appendTail(sb2);
+        return sb2.toString()
             .replace("&nbsp;", " ")
             .replace("&rlm;", "")
             .replace("&lrm;", "")
+            .replace("&quot;", "\"")
             .replace("&amp;", "&");
     }
 
@@ -432,9 +480,9 @@ public class RatesSyncWorker extends Worker {
                     if (ns.find() && Double.isNaN(target[1])) target[1] = parseNum(ns.group(1));
                 }
             }
-            if (validPair(usd, 30, 2000)) out.put("usd_syp", pairObj(usd, 2000));
+            if (validPair(usd, 50, 2000)) out.put("usd_syp", pairObj(usd, 2000));
             if (validPair(tr, 0.5, 80)) out.put("try_syp", pairObj(tr, 80));
-            if (validPair(eur, 30, 2500)) out.put("eur_syp", pairObj(eur, 2500));
+            if (validPair(eur, 50, 2500)) out.put("eur_syp", pairObj(eur, 2500));
             if (out.has("usd_syp") && out.has("try_syp")) {
                 JSONObject u = out.getJSONObject("usd_syp"), t = out.getJSONObject("try_syp");
                 JSONObject ut = new JSONObject();
@@ -442,7 +490,12 @@ public class RatesSyncWorker extends Worker {
                 ut.put("sell", Math.round((u.getDouble("sell") / t.getDouble("buy")) * 100.0) / 100.0);
                 out.put("try_usd", ut);
             }
-            return out.has("usd_syp") ? out : null;
+            if (!out.has("usd_syp")) return null;
+            JSONObject uCheck = out.getJSONObject("usd_syp");
+            if (Math.abs(uCheck.getDouble("buy") - uCheck.getDouble("sell")) < 1e-6 && !out.has("try_syp") && !out.has("eur_syp")) {
+                return null; // رفض أي رقم مفرد مكرر بدون عملات أخرى
+            }
+            return out;
         } catch (Exception e) { return null; }
     }
 
