@@ -10,8 +10,8 @@ window.APP_CONFIG = {
   CHANNELS: ['exchange_Currencyy', 'aboothman33'],
   // رابط الـ Worker بعد نشره (مثال: 'https://sarraf-rates.NAME.workers.dev/rates'). فارغ = قراءة تلغرام مباشرة
   API_URL: '',
-  GOLD_CHANNELS: '',                              // قنوات الذهب (فارغ = نفس قنوات العملات)
-  GOLD_API: 'https://api.gold-api.com/price/XAU', // مصدر مجاني لسعر الأونصة بدون مفتاح
+  GOLD_CHANNELS: '',                              // قنوات الذهب (فارغ = نفس قنوات العملات — حصراً من نشرات تلغرام/واتساب)
+  GOLD_API: '',                                   // معطّل: الذهب من نشرة التليجرام أو الواتساب وليس البورصة العالمية
   REFRESH_SECONDS: 60,          // التحديث مع الـ Worker
   DIRECT_REFRESH_SECONDS: 300,  // التحديث بالقراءة المباشرة من تلغرام (احتياط فقط)
   STALE_MINUTES: 10,            // بعدها بيطلع تنبيه "السعر قديم"

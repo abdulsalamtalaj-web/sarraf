@@ -49,11 +49,21 @@ const ITEMS = {
 const pairOf = (r, it) => (it.remit ? r.remit && r.remit[it.key] : r[it.key]);
 const enabledOrder = (s) => (Array.isArray(s.order) && s.order.length ? s.order : ['USD', 'SYP', 'SYP_OLD', 'TRY', 'EUR', 'GOLD']);
 
+async function fetchTimed(url, ms) {
+  const limit = ms || 9000;
+  return Promise.race([
+    fetch(url),
+    new Promise((_, rej) => { setTimeout(() => rej(new Error('timeout')), limit); }),
+  ]);
+}
+
 async function getRates(s) {
+  const bust = '_t=' + Date.now();
   // الـ Worker أولاً؛ القراءة المباشرة من تليجرام احتياط فقط
   if (s.apiUrl) {
     try {
-      const res = await fetch(s.apiUrl);
+      const sep = s.apiUrl.indexOf('?') >= 0 ? '&' : '?';
+      const res = await fetchTimed(s.apiUrl + sep + bust, 8000);
       if (res.ok) {
         const d = await res.json();
         if (d && d.usd_syp) return d;
@@ -61,23 +71,19 @@ async function getRates(s) {
     } catch (e) { /* ننتقل للقراءة المباشرة */ }
   }
   const page = async (ch) => {
-    const res = await fetch('https://t.me/s/' + encodeURIComponent(ch));
+    const res = await fetchTimed('https://t.me/s/' + encodeURIComponent(ch) + '?' + bust, 9000);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.text();
   };
   const fx = async () => {
-    const res = await fetch('https://open.er-api.com/v6/latest/USD');
+    const res = await fetchTimed('https://open.er-api.com/v6/latest/USD', 7000);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return (await res.json()).rates;
   };
-  const ounce = async () => {
-    const res = await fetch(s.goldApi || 'https://api.gold-api.com/price/XAU');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return (await res.json()).price;
-  };
   const last = kvGet('lastRates');
-  const d = await buildRates(s.channels || ['exchange_Currencyy'], page, fx, {
-    fetchGoldOunce: ounce, GOLD_CHANNELS: s.goldChannels || '', last: last ? { usd_syp: last.usd_syp } : null,
+  const d = await buildRates(s.channels || ['exchange_Currencyy', 'aboothman33'], page, fx, {
+    GOLD_CHANNELS: s.goldChannels || '',
+    last: last ? { usd_syp: last.usd_syp, post_time: last.post_time, fetched: last.fetched } : null,
   });
   if (d.error) throw new Error(d.error);
   return d;
@@ -87,7 +93,10 @@ async function getRates(s) {
 async function fresh(s) {
   try {
     const r = await getRates(s);
-    if (!r.gold) { const old = kvGet('lastRates'); if (old && old.gold) r.gold = old.gold; }
+    if (!r.gold) {
+      const old = kvGet('lastRates');
+      if (old && old.gold && old.gold.source !== 'gold-api') r.gold = old.gold;
+    }
     kvSet('lastRates', r);
     return { r, stale: false };
   } catch (e) {
@@ -108,18 +117,26 @@ async function weeklyVideoLine(s, today) {
   } catch (e) { return ''; }
 }
 
+function g21Usd(r, mode) {
+  if (!r || !r.gold) return null;
+  if (mode === 'buy' && r.gold.usd_buy && r.gold.usd_buy['21']) return r.gold.usd_buy['21'];
+  if (r.gold.usd && r.gold.usd['21']) return r.gold.usd['21'];
+  return null;
+}
 function g21Syp(r, mode) {
   if (!r || !r.gold) return null;
+  if (mode === 'buy' && r.gold.syp_buy && r.gold.syp_buy['21']) return r.gold.syp_buy['21'];
   if (r.gold.syp && r.gold.syp['21']) return r.gold.syp['21'];
-  return r.gold.usd && r.gold.usd['21'] ? r.gold.usd['21'] * r.usd_syp[mode] : null;
+  const u = g21Usd(r, mode);
+  return u && r.usd_syp && r.usd_syp[mode] ? u * r.usd_syp[mode] : null;
 }
 function goldText(s, r) {
   const mode = s.mode === 'sell' ? 'sell' : 'buy';
-  const g21 = g21Syp(r, mode);
-  if (!g21) return '';
-  const cur = s.goldCur || 'SYP', ratio = Number(s.oldPerNew) || 100;
+  const cur = s.goldCur || 'USD', ratio = Number(s.oldPerNew) || 100;
+  const u21 = g21Usd(r, mode), g21 = g21Syp(r, mode);
+  if (!g21 && !u21) return '';
   let t;
-  if (cur === 'USD') t = '$' + fmt(g21 / r.usd_syp[mode], 2);
+  if (cur === 'USD') t = '$' + fmt(u21 != null ? u21 : (g21 / r.usd_syp[mode]), 2);
   else if (cur === 'TRY' && r.try_syp) t = fmt(g21 / r.try_syp[mode], 0) + ' ₺';
   else if (cur === 'SYP_OLD') t = fmt(g21 * ratio, 0) + ' ل.س قديمة';
   else t = fmt(g21, 0) + ' ل.س';

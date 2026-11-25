@@ -17,9 +17,10 @@ function makeEnv({ usd = [146, 147], tr = [3.4, 3.5], nowIso }) {
     constructor(...a) { super(...(a.length ? a : [fixed])); }
     static now() { return fixed; }
   }
-  const page = `<div class="tgme_widget_message_wrap" data-post="x/1"><time datetime="${nowIso}"></time><div class="tgme_widget_message_text">الدولار<br>شراء ${usd[0]}<br>مبيع ${usd[1]}<br>التركي<br>شراء ${tr[0]}<br>مبيع ${tr[1]}</div></div>`;
+  const page = `<div class="tgme_widget_message_wrap" data-post="x/1"><time datetime="${nowIso}"></time><div class="tgme_widget_message_text">الدولار<br>شراء ${usd[0]}<br>مبيع ${usd[1]}<br>التركي<br>شراء ${tr[0]}<br>مبيع ${tr[1]}</div></div>`
+    + `<div class="tgme_widget_message_wrap" data-post="x/2"><time datetime="${nowIso}"></time><div class="tgme_widget_message_text">🥇 الذهب بالدولار<br>سعر عيار 21:<br>🟢 شراء: $99<br>🔴 مبيع: $101</div></div>`;
   const ctx = {
-    console, Date: FakeDate, Math, JSON, Promise, Map, Number, String, Object, Array, isFinite, parseInt, parseFloat, encodeURIComponent,
+    console, Date: FakeDate, Math, JSON, Promise, Map, Number, String, Object, Array, isFinite, parseInt, parseFloat, encodeURIComponent, setTimeout, clearTimeout,
     CapacitorKV: { get: (k) => (kv.has(k) ? { value: kv.get(k) } : null), set: (k, v) => kv.set(k, v), remove: (k) => kv.delete(k) },
     CapacitorNotifications: { schedule: async (n) => { sent.push(...n); } },
     addEventListener: (ev, fn) => { handlers[ev] = fn; },
@@ -27,7 +28,7 @@ function makeEnv({ usd = [146, 147], tr = [3.4, 3.5], nowIso }) {
       fetches++;
       if (url.includes('t.me/s/')) return { ok: true, text: async () => page };
       if (url.includes('er-api')) return { ok: true, json: async () => ({ rates: { TRY: 42, EUR: 0.9, SAR: 3.75, AED: 3.67, KWD: 0.307, JOD: 0.709 } }) };
-      if (url.includes('gold-api')) return { ok: true, json: async () => ({ price: 3900 }) };
+      if (url.includes('gold-api')) throw new Error('يجب عدم استدعاء البورصة العالمية gold-api!');
       throw new Error('unexpected ' + url);
     },
   };

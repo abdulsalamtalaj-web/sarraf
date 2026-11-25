@@ -33,6 +33,8 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** جسر بين واجهة الويب وأندرويد: الويدجت، المزامنة بالخلفية، المنبّه الدقيق، وتحديث الـ APK/OTA */
@@ -40,6 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SarrafNativePlugin extends Plugin {
 
     private static final AtomicBoolean APK_DOWNLOADING = new AtomicBoolean(false);
+    private static final ExecutorService WIDGET_EXEC = Executors.newSingleThreadExecutor();
     private static final Set<String> ALLOWED_APK_HOSTS = new HashSet<>(Arrays.asList(
         "github.com",
         "objects.githubusercontent.com",
@@ -61,6 +64,14 @@ public class SarrafNativePlugin extends Plugin {
         call.resolve(out);
     }
 
+    /** فحص فوري (<1ms) لحالة اتصال الشبكة لمنع أي تجمّد عند فتح التطبيق بلا إنترنت */
+    @PluginMethod
+    public void isOnline(PluginCall call) {
+        JSObject out = new JSObject();
+        out.put("online", SarrafData.isNetworkAvailable(getContext()));
+        call.resolve(out);
+    }
+
     /** إرجاع أحدث أسعار تم جلبها في الخلفية (سواء عبر WorkManager أو BackgroundRunner) ليفتح التطبيق بأحدث سعر فوراً */
     @PluginMethod
     public void getBackgroundRates(PluginCall call) {
@@ -71,17 +82,19 @@ public class SarrafNativePlugin extends Plugin {
         call.resolve(out);
     }
 
-    /** {rows:[{key,label,value}], usd, usdDir, g21, goldOn, mode, at, postAt} → الويدجتات */
+    /** {rows:[{key,label,value}], usd, usdDir, g21, goldOn, mode, at, postAt} → الويدجتات (بشكل غير متزامن لمنع تجميد الواجهة) */
     @PluginMethod
     public void updateWidget(PluginCall call) {
-        Context c = getContext();
+        final Context c = getContext().getApplicationContext();
         try {
             JSONObject o = new JSONObject(call.getData().toString());
             if (!o.has("at")) o.put("at", System.currentTimeMillis());
             SarrafData.prefs(c).edit().putString("widget", o.toString()).apply();
         } catch (Exception e) { call.reject(e.getMessage()); return; }
-        RatesWidget.updateAll(c);
         call.resolve();
+        WIDGET_EXEC.execute(() -> {
+            try { RatesWidget.updateAll(c); } catch (Exception ignored) { }
+        });
     }
 
     /** {enabled, times:["09:00","14:00"] بتوقيت دمشق, title, body} → يجدول المنبّه الدقيق لأقرب موعد */

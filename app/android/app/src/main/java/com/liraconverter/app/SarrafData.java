@@ -4,6 +4,11 @@ import android.appwidget.AppWidgetManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkInfo;
+import android.os.Build;
 import android.util.Log;
 
 import org.json.JSONObject;
@@ -28,6 +33,24 @@ public final class SarrafData {
 
     public static SharedPreferences prefs(Context c) { return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE); }
     public static SharedPreferences runner(Context c) { return c.getSharedPreferences(RUNNER_PREFS, Context.MODE_PRIVATE); }
+
+    /** فحص فوري (<1ms) لتوفر اتصال شبكة على أندرويد بدون أي طلب DNS قد يجمّد التطبيق */
+    public static boolean isNetworkAvailable(Context c) {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            if (Build.VERSION.SDK_INT >= 23) {
+                Network net = cm.getActiveNetwork();
+                if (net == null) return false;
+                NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+                return caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+            }
+            NetworkInfo info = cm.getActiveNetworkInfo();
+            return info != null && info.isConnected();
+        } catch (Exception e) {
+            return true;
+        }
+    }
 
     public static JSONObject runnerJson(Context c, String key) {
         try {
@@ -172,7 +195,10 @@ public final class SarrafData {
         if (r != null) {
             long rAt = parseIso(r.optString("fetched", null));
             long rPost = parseIso(r.optString("post_time", null));
-            if (rAt >= s.at || Double.isNaN(s.usdBuy)) {
+            // لا نسمح لنشرة خلفية أقدم (من حيث وقت النشرة الفعلي) بالكتابة فوق نشرة أحدث جلبها التطبيق
+            boolean runnerNewer = Double.isNaN(s.usdBuy)
+                || (rPost > 0 && s.postAt > 0 ? (rPost > s.postAt || (rPost == s.postAt && rAt >= s.at)) : rAt >= s.at);
+            if (runnerNewer) {
                 JSONObject prevBg = appJson(c, "prevBgUsd");
                 double ref = prevBg != null ? optNum(prevBg, "buy") : s.usdBuy;
                 applyRatesJson(s, r, ref);

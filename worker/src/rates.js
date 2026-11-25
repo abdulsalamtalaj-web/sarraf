@@ -4,11 +4,12 @@ import { parseChannelPage, parseGoldPage } from './parser.js';
 // القيم الافتراضية؛ تُغيَّر من wrangler.toml بدون تعديل الكود
 export const DEFAULTS = {
   CHANNELS: 'exchange_Currencyy,aboothman33',
-  GOLD_CHANNELS: '',                                    // فارغ = نفس قنوات العملات
-  GOLD_API: 'https://api.gold-api.com/price/XAU',      // احتياطي مجاني لسعر الأونصة
+  GOLD_CHANNELS: '',                                    // فارغ = نفس قنوات العملات (الذهب من نشرات تلغرام/واتساب فقط)
+  GOLD_API: '',                                         // معطّل: الذهب حصراً من نشرة التليجرام أو الواتساب وليس البورصة العالمية
   FX_API: 'https://open.er-api.com/v6/latest/USD',
 };
 export const JUMP_LIMIT = 0.10;      // رفض أي قفزة أكبر من 10% عن آخر سعر محفوظ...
+export const JUMP_MAX_AGE_MS = 48 * 3600 * 1000; // لا يُرفض السعر الحقيقي إذا كان السعر المحفوظ أقدم من 48 ساعة
 export const CONFIRM_LIMIT = 0.02;   // ...إلا إذا أكدها مصدر آخر بفرق أقل من 2%
 export const DISAGREE_LIMIT = 0.02;  // فرق أكبر من 2% بين القناتين = تنبيه "المصادر مختلفة"
 export const FRESH_ADVANTAGE_MS = 15 * 60 * 1000; // المصدر الأحدث بأكثر من 15 دقيقة يتقدّم على الأقدم
@@ -41,12 +42,6 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
     const d = JSON.parse(await defaultFetchText(cfg.FX_API));
     if (d.result !== 'success') throw new Error('FX bad response');
     return d.rates;
-  });
-  const fetchGoldOunce = opts.fetchGoldOunce || (async () => {
-    const d = JSON.parse(await defaultFetchText(cfg.GOLD_API));
-    const p = Number(d?.price);
-    if (!Number.isFinite(p) || p < 500 || p > 20000) throw new Error('gold-api bad price');
-    return p;
   });
 
   // كل صفحة تُجلب مرة واحدة فقط حتى لو استُخدمت للعملات والذهب
@@ -108,8 +103,10 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
   });
   if (!good.length) return { error: 'تعذر الحصول على الأسعار من كل القنوات', sources_tried: tried };
 
-  // 2) فحص القفزة: أكثر من 10% عن آخر سعر محفوظ مرفوض إلا إذا أكده مصدر آخر (أو اعتماد يدوي)
-  const lastMid = mid(opts.last?.usd_syp);
+  // 2) فحص القفزة: أكثر من 10% عن آخر سعر محفوظ (الحديث <48 ساعة) مرفوض إلا إذا أكده مصدر آخر أو نشرتان متتاليتان
+  const lastTs = tsOf(opts.last?.post_time || opts.last?.fetched);
+  const lastFresh = !lastTs || (Date.now() - lastTs) <= JUMP_MAX_AGE_MS;
+  const lastMid = lastFresh ? mid(opts.last?.usd_syp) : null;
   const confirmedBy = (cand) => {
     const m = mid(cand.data.usd_syp);
     const other = good.find((o) => o !== cand && diff(mid(o.data.usd_syp), m) <= CONFIRM_LIMIT);
@@ -180,7 +177,7 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
 
   const goldChannels = list(cfg.GOLD_CHANNELS).length ? list(cfg.GOLD_CHANNELS) : channels;
   const extraGold = extra.filter((s) => s?.ok && s.gold).map((s) => ({ ...s.gold, source: s.channel || s.source || 'whatsapp', kind: s.kind || 'whatsapp' }));
-  const gold = await buildGold(data, goldChannels, getPage, fetchGoldOunce, tried, extraGold);
+  const gold = await buildGold(data, goldChannels, getPage, null, tried, extraGold);
 
   return {
     usd_syp: data.usd_syp,
@@ -203,8 +200,8 @@ export async function buildRates(channels, fetchPage, fetchFx, opts = {}) {
   };
 }
 
-// الذهب: يختار أحدث نشرة محلية/ذهب متاحة، مع وقت مستقل واضح وتمييز المحلي عن التقديري
-async function buildGold(data, channels, getPage, fetchGoldOunce, tried, extraGold = []) {
+// الذهب: يُؤخذ حصراً من نشرات التليجرام أو الواتساب أو الاعتماد اليدوي (وليس من البورصة العالمية)
+async function buildGold(data, channels, getPage, _fetchGoldOunce, _tried, extraGold = []) {
   const tgGold = (await Promise.all(channels.map(async (ch) => {
     try {
       const parsed = parseGoldPage(await getPage(ch));
@@ -213,76 +210,126 @@ async function buildGold(data, channels, getPage, fetchGoldOunce, tried, extraGo
   }))).filter(Boolean);
 
   const candidates = [...extraGold, ...tgGold];
-  const hasLocalSyp = (c) => !!(c?.syp?.['21'] || c?.gram?.['21']?.cur === 'syp');
+  const hasExplicitGram = (c) => !!(c?.syp?.['21'] || c?.syp?.['24'] || c?.syp?.['18'] || c?.gram?.['21'] || c?.gram?.['24'] || c?.gram?.['18']);
   candidates.sort((a, b) => {
     if (a.kind === 'manual' && b.kind !== 'manual') return -1;
     if (b.kind === 'manual' && a.kind !== 'manual') return 1;
-    const al = hasLocalSyp(a), bl = hasLocalSyp(b);
+    const ag = hasExplicitGram(a), bg = hasExplicitGram(b);
     const ta = tsOf(a.post_time), tb = tsOf(b.post_time);
-    if (al !== bl) {
-      // المحلي يتقدّم ما لم يكن أقدم بأكثر من 24 ساعة من مصدر آخر
-      if (al && (!tb || ta >= tb - 24 * 3600e3)) return -1;
-      if (bl && (!ta || tb >= ta - 24 * 3600e3)) return 1;
+    if (ag !== bg) {
+      // نشرة تحتوي سعر غرام صريح (عيار 21/24/18) تتقدّم على نشرة أونصة فقط ما لم تكن أقدم بأكثر من 24 ساعة
+      if (ag && (!tb || ta >= tb - 24 * 3600e3)) return -1;
+      if (bg && (!ta || tb >= ta - 24 * 3600e3)) return 1;
     }
     return tb - ta;
   });
 
   const g = candidates[0] || null;
-  let ounce = g?.ounce_usd || null;
-  if (!ounce && g?.gram?.['24']?.cur === 'usd') ounce = g.gram['24'].value * OZ_GRAMS;
-  let ounceSource = g?.ounce_usd ? g.source : null;
-  let ounceTime = g?.ounce_usd ? (g.post_time || null) : null;
-  if (!ounce) {
-    try {
-      const p = await fetchGoldOunce();
-      if (Number.isFinite(p) && p >= 500 && p <= 20000) {
-        ounce = p;
-        ounceSource = 'gold-api';
-        ounceTime = new Date().toISOString();
-      }
-    } catch (e) {
-      tried.push({ channel: 'gold-api', kind: 'api', ok: false, error: String(e.message || e) });
+  if (!g) return null;
+
+  const usdSell = data.usd_syp.sell;
+  const usdBuy = data.usd_syp.buy;
+  const normSyp = (val) => {
+    if (!Number.isFinite(val) || val <= 0) return null;
+    let v = val;
+    if (v / usdSell > 2000) v = v / 100; // تحويل الليرة القديمة إلى الجديدة
+    return r4(v);
+  };
+
+  const syp = {}, sypBuy = {};
+  const usd = {}, usdBuyMap = {};
+
+  // 1) أسعار سوري صريحة من النشرة (مثل الاعتماد اليدوي أو نشرة واتساب/تلغرام بالليرة السورية)
+  if (g.syp) {
+    for (const k of ['24', '21', '18', 'lira']) {
+      if (Number.isFinite(g.syp[k]) && g.syp[k] > 0) syp[k] = normSyp(g.syp[k]);
+    }
+  }
+  if (g.syp_buy) {
+    for (const k of ['24', '21', '18', 'lira']) {
+      if (Number.isFinite(g.syp_buy[k]) && g.syp_buy[k] > 0) sypBuy[k] = normSyp(g.syp_buy[k]);
     }
   }
 
-  const usdSell = data.usd_syp.sell;
-  const localSyp = (item) => {
-    if (!item || item.cur !== 'syp') return null;
-    let v = item.value;
-    if (v / usdSell > 2000) v = v / 100;
-    return r4(v);
+  // 2) أسعار غرامات من نشرة التليجرام أو الواتساب (بالدولار أو بالسوري، ومع دعم شراء/مبيع)
+  for (const k of ['24', '21', '18']) {
+    const it = g.gram?.[k];
+    if (!it) continue;
+    const sellVal = it.sell ?? it.value ?? it.buy;
+    const buyVal = it.buy ?? it.value ?? it.sell;
+    if (it.cur === 'syp') {
+      if (!syp[k] && sellVal) syp[k] = normSyp(sellVal);
+      if (!sypBuy[k] && buyVal) sypBuy[k] = normSyp(buyVal);
+    } else if (it.cur === 'usd') {
+      if (sellVal) usd[k] = r4(sellVal);
+      if (buyVal) usdBuyMap[k] = r4(buyVal);
+    }
+  }
+  if (g.lira) {
+    const sellVal = g.lira.sell ?? g.lira.value ?? g.lira.buy;
+    const buyVal = g.lira.buy ?? g.lira.value ?? g.lira.sell;
+    if (g.lira.cur === 'syp') {
+      if (!syp.lira && sellVal) syp.lira = normSyp(sellVal);
+      if (!sypBuy.lira && buyVal) sypBuy.lira = normSyp(buyVal);
+    } else if (g.lira.cur === 'usd') {
+      if (sellVal) usd.lira = r4(sellVal);
+      if (buyVal) usdBuyMap.lira = r4(buyVal);
+    }
+  }
+
+  // 3) إكمال العيارات الناقصة انطلاقاً من عيار النشرة نفسه (عيار 21 أولاً، ثم 24، ثم 18) وليس من البورصة العالمية!
+  const deriveMissing = (map) => {
+    const base24 = map['21'] ? (map['21'] * 24) / 21
+      : map['24'] ? map['24']
+        : map['18'] ? (map['18'] * 24) / 18
+          : null;
+    if (!base24) return false;
+    for (const k of ['24', '21', '18']) {
+      if (!map[k]) map[k] = r4((base24 * +k) / 24);
+    }
+    if (!map.lira && map['21']) map.lira = r4(map['21'] * 8);
+    return true;
   };
-  const syp = {};
-  if (g?.syp) {
-    for (const k of ['24', '21', '18', 'lira']) if (Number.isFinite(g.syp[k]) && g.syp[k] > 0) syp[k] = r4(g.syp[k]);
-  }
-  for (const k of ['24', '21', '18']) {
-    if (!syp[k]) { const v = localSyp(g?.gram?.[k]); if (v) syp[k] = v; }
-  }
-  if (!syp.lira) {
-    const lira = localSyp(g?.lira);
-    if (lira) syp.lira = lira;
+
+  const hasUsdGrams = deriveMissing(usd);
+  if (Object.keys(usdBuyMap).length) deriveMissing(usdBuyMap);
+  const hasSypGrams = deriveMissing(syp);
+  if (Object.keys(sypBuy).length) deriveMissing(sypBuy);
+
+  // الأونصة تُؤخذ فقط إذا ذُكرت داخل نشرة التليجرام أو الواتساب نفسها (لا نطلب gold-api أبداً)
+  const ounce = Number.isFinite(g.ounce_usd) && g.ounce_usd > 500 ? r4(g.ounce_usd) : null;
+
+  // تحويل بين USD و SYP حسب المتوفر من النشرة، وإذا لم تتوفر غرامات نهائياً نستخدم أونصة النشرة نفسها فقط
+  if (!hasUsdGrams) {
+    if (hasSypGrams) {
+      for (const k of ['24', '21', '18', 'lira']) {
+        if (syp[k]) usd[k] = r4(syp[k] / usdSell);
+        if (sypBuy[k]) usdBuyMap[k] = r4(sypBuy[k] / usdBuy);
+      }
+    } else if (ounce) {
+      const g24 = ounce / OZ_GRAMS;
+      for (const k of ['24', '21', '18']) usd[k] = r4((g24 * +k) / 24);
+      usd.lira = r4(usd['21'] * 8);
+    }
   }
 
-  const usd = {};
-  const g24 = ounce ? ounce / OZ_GRAMS : null;
-  for (const k of ['24', '21', '18']) {
-    usd[k] = g24 ? r4((g24 * +k) / 24) : (syp[k] ? r4(syp[k] / usdSell) : null);
-  }
-  usd.lira = usd['21'] ? r4(usd['21'] * 8) : (syp.lira ? r4(syp.lira / usdSell) : null);
-  if (!syp.lira && syp['21']) syp.lira = r4(syp['21'] * 8);
+  if (!Object.keys(usd).length && !Object.keys(syp).length && !ounce) return null;
 
-  if (!ounce && !Object.keys(syp).length) return null;
-  const isLocal = !!syp['21'];
+  const fromBulletinGram = hasUsdGrams || hasSypGrams;
+  const hasBuySplit = Object.keys(usdBuyMap).length > 0 && (usdBuyMap['21'] !== usd['21']);
+  const hasSypBuySplit = Object.keys(sypBuy).length > 0 && (sypBuy['21'] !== syp['21']);
+
   return {
-    ounce_usd: r4(ounce),
+    ounce_usd: ounce,
     usd,
+    usd_buy: hasBuySplit ? usdBuyMap : null,
     syp: Object.keys(syp).length ? syp : null,
-    is_local: isLocal,
-    estimated: !isLocal,
-    post_time: g?.post_time || null,
-    ounce_time: ounceTime,
-    source: g?.source || ounceSource,
-    source_kind: g?.kind || (ounceSource === 'gold-api' ? 'api' : 'telegram'),
+    syp_buy: hasSypBuySplit ? sypBuy : null,
+    is_local: fromBulletinGram,
+    estimated: !fromBulletinGram,
+    post_time: g.post_time || null,
+    ounce_time: ounce ? (g.post_time || null) : null,
+    source: g.source || null,
+    source_kind: g.kind || 'telegram',
   };
 }

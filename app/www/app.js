@@ -29,6 +29,7 @@ const LS = {
   remote: 'sarraf.remoteConfig', otaReady: 'sarraf.otaReadyBuild', otaPath: 'sarraf.otaPath',
   order: 'sarraf.order', gcDir: 'sarraf.gcDir', change: 'sarraf.change', updSkip: 'sarraf.updSkip',
   tipsOn: 'sarraf.tipsOn', wvDismissed: 'sarraf.wvDismissedV2', wvPos: 'sarraf.wvPos', wvCache: 'sarraf.wvCache',
+  runnerSig: 'sarraf.runnerSig',
 };
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -99,13 +100,24 @@ const priceOf = (r, id) => { const k = PRICE_KEY[id]; return k ? (r?.[k] || r?.r
 // عملات أجنبية مفعّلة بالترتيب (بدون الليرة السورية نفسها) — للمشاركة والإشعار والويدجت
 const foreignEnabled = (r) => enabledIds().filter((id) => PRICE_KEY[id] && (!r || priceOf(r, id)));
 
-// سعر وحدة الذهب بالليرة الجديدة: المحلي إن وُجد، وإلا (الدولار × سعر الدولار بالسوق)
+// سعر وحدة الذهب بالدولار مباشرة من نشرة التليجرام أو الواتساب (يدعم شراء/مبيع)
+function goldUsd(r, k, mode) {
+  const g = r?.gold;
+  if (!g) return null;
+  if (k === 'ounce') return g.ounce_usd ?? null;
+  if (mode === 'buy' && g.usd_buy?.[k] != null) return g.usd_buy[k];
+  if (g.usd?.[k] != null) return g.usd[k];
+  const s = (mode === 'buy' && g.syp_buy?.[k] != null) ? g.syp_buy[k] : g.syp?.[k];
+  return s && r.usd_syp?.[mode] ? s / r.usd_syp[mode] : null;
+}
+// سعر وحدة الذهب بالليرة الجديدة: المحلي بالسوري إن وُجد، وإلا (سعر الغرام بالدولار من النشرة × سعر الدولار)
 function goldSyp(r, k, mode) {
   const g = r?.gold;
   if (!g) return null;
   if (k === 'ounce') return g.ounce_usd && r.usd_syp?.[mode] ? g.ounce_usd * r.usd_syp[mode] : null;
-  if (g.syp?.[k]) return g.syp[k];
-  const u = g.usd?.[k];
+  if (mode === 'buy' && g.syp_buy?.[k] != null) return g.syp_buy[k];
+  if (g.syp?.[k] != null) return g.syp[k];
+  const u = goldUsd(r, k, mode);
   return u && r.usd_syp?.[mode] ? u * r.usd_syp[mode] : null;
 }
 // تحويل قيمة بالليرة الجديدة إلى عملة عرض الذهب، بنفس وضع الشراء/المبيع
@@ -117,12 +129,26 @@ function sypTo(cur, syp, r, mode) {
   if (cur === 'TRY') return r.try_syp?.[mode] ? syp / r.try_syp[mode] : null;
   return null;
 }
-const goldIn = (r, k, cur, mode) => sypTo(cur, goldSyp(r, k, mode), r, mode);
+function goldIn(r, k, cur, mode) {
+  if (cur === 'USD') return goldUsd(r, k, mode);
+  return sypTo(cur, goldSyp(r, k, mode), r, mode);
+}
+
+function isValidRates(r) {
+  return !!(r && r.usd_syp && Number.isFinite(r.usd_syp.buy) && Number.isFinite(r.usd_syp.sell)
+    && r.usd_syp.buy > 0 && r.usd_syp.sell >= r.usd_syp.buy);
+}
+function sanitizeCachedRates(r) {
+  if (!isValidRates(r)) return null;
+  // إزالة أي سعر ذهب قديم كان محسوباً من البورصة العالمية (gold-api) حتى يظهر سعر نشرة تلغرام/واتساب مباشرة
+  if (r.gold && r.gold.source === 'gold-api') r = { ...r, gold: null };
+  return r;
+}
 
 const state = {
-  rates: store.get(LS.rates),
-  prev: store.get(LS.prev),
-  prevG: store.get(LS.prevG),
+  rates: sanitizeCachedRates(store.get(LS.rates)),
+  prev: sanitizeCachedRates(store.get(LS.prev)),
+  prevG: sanitizeCachedRates(store.get(LS.prevG)),
   lastOkAt: store.get(LS.okAt),
   src: store.get(LS.src, 'USD'),
   karat: store.get(LS.karat, '21'),
@@ -139,20 +165,35 @@ const state = {
   remoteHist: null,
   via: null,          // 'worker' | 'direct'
   suspect: null,      // سعر مرفوض بالفحص المنطقي
-  online: true,
+  online: typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
   loading: false,
 };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmtNum = (v, dec, minDec = 0) => v == null || !isFinite(v) ? '—'
-  : new Intl.NumberFormat('en-US', { minimumFractionDigits: minDec, maximumFractionDigits: dec }).format(v);
-const fmtTime = (iso) => {
+
+// تخزين مسبق لمنسّقات الأرقام والتاريخ (يمنع إنشاء مئات الكائنات أثناء الحركة ويمنع التجمّد على أندرويد)
+const numFmtCache = new Map();
+function fmtNum(v, dec, minDec = 0) {
+  if (v == null || !isFinite(v)) return '—';
+  const key = `${dec}:${minDec}`;
+  let f = numFmtCache.get(key);
+  if (!f) {
+    f = new Intl.NumberFormat('en-US', { minimumFractionDigits: minDec, maximumFractionDigits: dec });
+    numFmtCache.set(key, f);
+  }
+  return f.format(v);
+}
+let damascusTimeFmt = null;
+function fmtTime(iso) {
   if (!iso) return '—';
   try {
-    return new Intl.DateTimeFormat('ar-SY-u-nu-latn', { timeZone: 'Asia/Damascus', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
+    if (!damascusTimeFmt) {
+      damascusTimeFmt = new Intl.DateTimeFormat('ar-SY-u-nu-latn', { timeZone: 'Asia/Damascus', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' });
+    }
+    return damascusTimeFmt.format(new Date(iso));
   } catch { return new Date(iso).toLocaleString(); }
-};
+}
 function plural(n, one, two, few) {
   if (n === 1) return one;
   if (n === 2) return two;
@@ -169,25 +210,36 @@ const ago = (iso) => {
 };
 const parseAmount = (s) => { const v = parseFloat(normalizeDigits(String(s)).replace(/[,\s]/g, '')); return Number.isFinite(v) ? v : 0; };
 
-// ================= عدّاد الأرقام (count-up) =================
+// ================= عدّاد الأرقام (count-up) بدون تسرّب إطارات =================
 const shown = new Map(); // آخر قيمة معروضة لكل مفتاح
+const activeAnim = new Map(); // مفتاح → { raf, end } لإلغاء أي حركة قديمة قبل إعادة البناء
+function stopNumAnim(key) {
+  const prev = activeAnim.get(key);
+  if (!prev) return;
+  cancelAnimationFrame(prev.raf);
+  clearTimeout(prev.end);
+  activeAnim.delete(key);
+}
 function setNum(el, key, value, dec, animate) {
   if (!el) return;
+  stopNumAnim(key);
   const prev = shown.get(key);
   shown.set(key, value);
   const txt = (v) => fmtNum(v, dec);
-  if (el._raf) cancelAnimationFrame(el._raf);
-  clearTimeout(el._end);
   if (!animate || reduceMotion || prev == null || value == null || !isFinite(prev) || prev === value) { el.textContent = txt(value); return; }
-  const t0 = performance.now(), D = 320;
+  const t0 = performance.now(), D = 260;
+  const rec = { raf: 0, end: 0 };
   const step = (t) => {
+    if (!el.isConnected) { stopNumAnim(key); return; }
     const p = Math.min(1, (t - t0) / D), e = 1 - Math.pow(1 - p, 3);
     el.textContent = txt(prev + (value - prev) * e);
-    if (p < 1) el._raf = requestAnimationFrame(step);
+    if (p < 1) rec.raf = requestAnimationFrame(step);
+    else activeAnim.delete(key);
   };
-  el._raf = requestAnimationFrame(step);
+  rec.raf = requestAnimationFrame(step);
   // ضمان القيمة النهائية حتى لو توقفت الإطارات (التطبيق بالخلفية)
-  el._end = setTimeout(() => { cancelAnimationFrame(el._raf); el.textContent = txt(value); }, D + 40);
+  rec.end = setTimeout(() => { cancelAnimationFrame(rec.raf); activeAnim.delete(key); if (el.isConnected) el.textContent = txt(value); }, D + 40);
+  activeAnim.set(key, rec);
 }
 function fillNums(root, animate) {
   root.querySelectorAll('[data-k]').forEach((el) => {
@@ -240,54 +292,97 @@ function workerPath(path) {
   try { const u = new URL(a); u.pathname = path; u.search = ''; return u.toString(); } catch { return ''; }
 }
 function contentUrl() { return CFG.TIPS_URL || CFG.CONTENT_URL || workerPath('/content'); }
-async function fetchWithTimeout(url, ms = 12000) {
+// فحص فوري (<1ms) لتوفر الشبكة لمنع أي تجمّد عند فتح التطبيق بلا إنترنت
+async function checkOnlineFast() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+  const N = P('SarrafNative');
+  if (N?.isOnline) {
+    try {
+      const r = await Promise.race([
+        N.isOnline(),
+        new Promise((res) => setTimeout(() => res({ online: true }), 400)),
+      ]);
+      if (r && r.online === false) return false;
+    } catch {}
+  }
+  return true;
+}
+
+// fetch مع مهلة صارمة (Promise.race + AbortController) حتى لا يتجمّد التطبيق إذا تجاهل CapacitorHttp إلغاء الطلب
+async function fetchWithTimeout(url, ms = 8500, extraOpts = {}) {
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), ms);
-  try { return await fetch(url, { signal: ctl.signal }); } finally { clearTimeout(t); }
+  let timerId = null;
+  const timeoutP = new Promise((_, rej) => {
+    timerId = setTimeout(() => {
+      try { ctl.abort(); } catch {}
+      rej(new Error('network timeout'));
+    }, ms);
+  });
+  try {
+    return await Promise.race([
+      fetch(url, { cache: 'no-store', ...extraOpts, signal: ctl.signal }),
+      timeoutP,
+    ]);
+  } finally {
+    clearTimeout(timerId);
+  }
 }
 class SuspectError extends Error { constructor(msg, rejected, fromWorker) { super(msg); this.rejected = rejected; this.fromWorker = fromWorker; } }
 async function fetchFromWorker(url) {
-  const res = await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now());
+  const res = await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now(), 8000);
   let d = null;
   try { d = await res.json(); } catch { throw new Error('worker bad json ' + res.status); }
   if (d && d.rejected && !d.usd_syp) throw new SuspectError(d.error, d.rejected, true); // الـ Worker شغال بس السعر مشبوه
-  if (!res.ok || !d.usd_syp) throw new Error('worker ' + res.status);
+  if (!res.ok || !isValidRates(d)) throw new Error('worker ' + res.status);
   return d;
 }
 async function fetchDirect() {
+  const bust = Date.now();
   const page = async (ch) => {
-    const res = await fetchWithTimeout(`https://t.me/s/${encodeURIComponent(ch)}`);
+    const res = await fetchWithTimeout(`https://t.me/s/${encodeURIComponent(ch)}?_t=${bust}`, 8500);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
   };
   const fx = async () => {
-    const res = await fetchWithTimeout('https://open.er-api.com/v6/latest/USD');
+    const res = await fetchWithTimeout('https://open.er-api.com/v6/latest/USD', 6000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()).rates;
   };
-  const ounce = async () => {
-    const res = await fetchWithTimeout(CFG.GOLD_API);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()).price;
-  };
-  const last = state.rates?.usd_syp ? { usd_syp: state.rates.usd_syp } : null;
-  const d = await buildRates(channels(), page, fx, { fetchGoldOunce: ounce, GOLD_CHANNELS: CFG.GOLD_CHANNELS || '', last });
+  const last = isValidRates(state.rates)
+    ? { usd_syp: state.rates.usd_syp, post_time: state.rates.post_time, fetched: state.lastOkAt }
+    : null;
+  const d = await buildRates(channels(), page, fx, { GOLD_CHANNELS: CFG.GOLD_CHANNELS || '', last });
   if (d.error) { if (d.rejected) throw new SuspectError(d.error, d.rejected, false); throw new Error(d.error); }
   return d;
 }
 
-// مزامنة فورية من الأسعار التي جلبها التطبيق في الخلفية (WorkManager / BackgroundRunner) حتى يفتح التطبيق بأحدث سعر فوراً
+// مزامنة فورية من الأسعار التي جلبها التطبيق في الخلفية (بمقارنة وقت النشرة الفعلي وليس وقت الجلب فقط)
 async function syncFromBackground() {
   const N = P('SarrafNative');
   if (!N?.getBackgroundRates) return false;
   try {
-    const res = await N.getBackgroundRates();
+    const res = await Promise.race([
+      N.getBackgroundRates(),
+      new Promise((r) => setTimeout(() => r(null), 600)),
+    ]);
     if (!res?.ratesJson) return false;
-    const bg = JSON.parse(res.ratesJson);
-    if (!bg?.usd_syp) return false;
-    const bgAt = Date.parse(bg.fetched || bg.post_time || '') || 0;
+    const bg = sanitizeCachedRates(JSON.parse(res.ratesJson));
+    if (!bg) return false;
+    const bgPost = Date.parse(bg.post_time || '') || 0;
+    const curPost = Date.parse(state.rates?.post_time || '') || 0;
+    const bgAt = Date.parse(bg.fetched || '') || 0;
     const curAt = Date.parse(state.lastOkAt || state.rates?.fetched || '') || 0;
-    if (bgAt > curAt || !state.rates) {
+    const bgIsNewer = !state.rates
+      || (bgPost > 0 && curPost > 0 ? (bgPost > curPost || (bgPost === curPost && bgAt > curAt)) : bgAt > curAt);
+    if (bgIsNewer) {
+      // لا نستبدل ذهباً أحدث بذهب مفقود أو أقدم من الخلفية
+      if (!bg.gold && state.rates?.gold) bg.gold = state.rates.gold;
+      else if (bg.gold && state.rates?.gold) {
+        const bgGoldTs = Date.parse(bg.gold.post_time || '') || 0;
+        const curGoldTs = Date.parse(state.rates.gold.post_time || '') || 0;
+        if (curGoldTs > bgGoldTs) bg.gold = state.rates.gold;
+      }
+      if (!bg.remit && state.rates?.remit) bg.remit = state.rates.remit;
       if (state.rates && !sameRates(state.rates, bg)) {
         state.prev = state.rates; store.set(LS.prev, state.prev);
       }
@@ -302,15 +397,32 @@ async function syncFromBackground() {
   return false;
 }
 const sameRates = (a, b) => a && b && RATE_ROWS.every(({ key }) => a[key]?.buy === b[key]?.buy && a[key]?.sell === b[key]?.sell);
-const goldSig = (r) => JSON.stringify([r?.gold?.usd, r?.gold?.syp, r?.usd_syp]);
+const goldSig = (r) => JSON.stringify([r?.gold?.usd, r?.gold?.usd_buy, r?.gold?.syp, r?.gold?.syp_buy, r?.usd_syp]);
 
-let firstPaint = true, timer = null, lastAttemptAt = 0, lastDirectAt = 0;
+let firstPaint = true, timer = null, lastAttemptAt = 0, lastDirectAt = 0, fetchSeq = 0, pendingManualRefresh = false;
 const nextDelay = () => (state.via === 'worker' ? WORKER_REFRESH : DIRECT_REFRESH);
 function scheduleNext() { clearTimeout(timer); timer = setTimeout(() => refresh(), nextDelay()); }
 
-async function refresh({ manual = false } = {}) {
-  if (state.loading) return;
+async function refresh({ manual = false, force = false } = {}) {
+  if (state.loading) {
+    // إذا طلب المستخدم تحديثاً يدوياً أثناء انشغال التحديث التلقائي، لا نهمله أبداً بل ننفّذه مباشرة بعده
+    if (manual || force) pendingManualRefresh = true;
+    return;
+  }
+  const hasNet = await checkOnlineFast();
+  if (!hasNet) {
+    state.online = false;
+    $('ptr').classList.remove('loading', 'pull');
+    $('ptr').style.transform = '';
+    renderStatus();
+    if (manual) toast('لا يوجد اتصال بالإنترنت — معروضة آخر أسعار محفوظة');
+    firstPaint = false;
+    scheduleNext();
+    return;
+  }
+
   state.loading = true;
+  const seq = ++fetchSeq;
   lastAttemptAt = Date.now();
   $('ptr').classList.add('loading');
   let data = null, changed = false;
@@ -322,19 +434,35 @@ async function refresh({ manual = false } = {}) {
       catch (e) { if (e instanceof SuspectError) { workerAlive = true; throw e; } console.warn('worker failed', e); }
     }
     if (!data && !workerAlive) {
-      // احتياط: قراءة مباشرة بحد أقصى مرة كل 5 دقايق (إلا إذا ضغط المستخدم تحديث أو ما في أسعار أبداً)
-      if (!manual && state.rates && Date.now() - lastDirectAt < DIRECT_REFRESH - 5000) { state.via = 'direct'; return; }
+      // احتياط: قراءة مباشرة بحد أقصى مرة كل 5 دقايق للتحديث الخلفي، أما عند الفتح أو التحديث اليدوي فيجلب فوراً
+      const throttled = !manual && !force && !firstPaint && state.rates && (Date.now() - lastDirectAt < DIRECT_REFRESH - 5000);
+      if (throttled) { state.via = 'direct'; return; }
       lastDirectAt = Date.now();
       state.via = 'direct';
       data = await fetchDirect();
     }
+    if (seq !== fetchSeq) return; // تجاهل أي استجابة قديمة وصلت متأخرة بعد طلب أحدث
+    if (!isValidRates(data)) throw new Error('invalid rates payload');
+
+    // حماية من استبدال نشرة أحدث بنشرة أقدم في حال تأخّر الكاش
+    const newPost = Date.parse(data.post_time || '') || 0;
+    const curPost = Date.parse(state.rates?.post_time || '') || 0;
+    if (!manual && state.rates && newPost > 0 && curPost > 0 && newPost < curPost) {
+      state.online = true;
+      state.lastOkAt = new Date().toISOString();
+      store.set(LS.okAt, state.lastOkAt);
+      return;
+    }
+
     if (state.rates && !sameRates(state.rates, data)) {
       state.prev = state.rates; store.set(LS.prev, state.prev); changed = true;
+    }
+    if (!data.gold && state.rates?.gold && state.rates.gold.source !== 'gold-api') {
+      data.gold = state.rates.gold;
     }
     if (state.rates?.gold && data.gold && goldSig(state.rates) !== goldSig(data)) {
       state.prevG = state.rates; store.set(LS.prevG, state.prevG); changed = true;
     }
-    if (!data.gold && state.rates?.gold) data.gold = state.rates.gold;
     state.rates = data;
     state.suspect = null;
     state.lastOkAt = new Date().toISOString();
@@ -355,6 +483,10 @@ async function refresh({ manual = false } = {}) {
     if (changed) flashChanged();
     firstPaint = false;
     scheduleNext();
+    if (pendingManualRefresh) {
+      pendingManualRefresh = false;
+      setTimeout(() => refresh({ manual: true, force: true }), 50);
+    }
   }
 }
 
@@ -372,10 +504,10 @@ function afterNewRates(r) {
     eurBuy: r.eur_syp?.buy ?? NaN, eurSell: r.eur_syp?.sell ?? NaN,
     utBuy: r.try_usd?.buy ?? NaN, utSell: r.try_usd?.sell ?? NaN,
     usdDir: prevUsd ? Math.sign(r.usd_syp.buy - prevUsd) : 0,
-    g21Usd: g?.usd?.['21'] ?? NaN,
-    g18Usd: g?.usd?.['18'] ?? NaN,
-    g24Usd: g?.usd?.['24'] ?? NaN,
-    gLiraUsd: g?.usd?.lira ?? NaN,
+    g21Usd: goldUsd(r, '21', m) ?? NaN,
+    g18Usd: goldUsd(r, '18', m) ?? NaN,
+    g24Usd: goldUsd(r, '24', m) ?? NaN,
+    gLiraUsd: goldUsd(r, 'lira', m) ?? NaN,
     g21: goldSyp(r, '21', m) ?? NaN,
     goldLocal: !!(g && (g.is_local ?? !g.estimated)),
     goldOn: goldOn(),
@@ -402,9 +534,9 @@ function recordHistory(r) {
 }
 async function loadRemoteHistory() {
   const url = workerPath('/history');
-  if (!url) return;
+  if (!url || !(await checkOnlineFast())) return;
   try {
-    const d = await (await fetchWithTimeout(url + '?days=30', 10000)).json();
+    const d = await (await fetchWithTimeout(url + '?days=30', 6000)).json();
     if (Array.isArray(d.points)) { state.remoteHist = d.points; renderChart(); }
   } catch { /* نكمل بالسجل المحلي */ }
 }
@@ -549,17 +681,23 @@ function renderGold(animate) {
   const isLocal = g.is_local ?? !g.estimated;
   const kindTag = $('goldKindTag');
   if (kindTag) {
-    kindTag.textContent = isLocal ? 'سعر محلي' : 'تقديري (أونصة × دولار)';
+    const srcLabel = g.source_kind === 'manual' ? 'نشرة معتمدة'
+      : g.source_kind === 'whatsapp' ? 'نشرة واتساب'
+        : isLocal ? 'نشرة تلغرام' : 'من أونصة النشرة';
+    kindTag.textContent = srcLabel;
     kindTag.className = 'tag ' + (isLocal ? 'local' : 'est');
   }
   document.querySelectorAll('#goldCur [data-cur]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.cur === state.goldCur)));
   const cur = state.goldCur, cfg = GOLD_CURS[cur], pg = state.prevG, m = state.mode;
   const dec = (v) => (cur === 'TRY' && v != null && v < 1000 ? 2 : cfg.dec);
-  const items = [...GOLD_ITEMS, ...(g.ounce_usd ? [{ k: 'ounce', name: 'الأونصة العالمية', sub: '31.1 غرام عيار 24' }] : [])];
+  const items = [...GOLD_ITEMS, ...(g.ounce_usd ? [{ k: 'ounce', name: 'أونصة النشرة', sub: '31.1 غرام عيار 24' }] : [])];
   $('goldList').innerHTML = items.map((it) => {
     const v = goldIn(r, it.k, cur, m), c = dirClass(v, pg ? goldIn(pg, it.k, cur, m) : null);
     const sypEq = cur === 'USD' ? goldSyp(r, it.k, m) : null;
-    const subLine = [it.sub, sypEq ? `≈ ${fmtNum(sypEq, 0)} ل.س` : ''].filter(Boolean).join(' · ');
+    const bsHint = (cur === 'USD' && it.k === '21' && g.usd_buy?.['21'] != null && g.usd?.['21'] != null && g.usd_buy['21'] !== g.usd['21'])
+      ? `شراء $${fmtNum(g.usd_buy['21'], 2)} · مبيع $${fmtNum(g.usd['21'], 2)}`
+      : '';
+    const subLine = [it.sub, bsHint, sypEq ? `≈ ${fmtNum(sypEq, 0)} ل.س` : ''].filter(Boolean).join(' · ');
     return `<div class="g-row ${it.main ? 'main' : ''}">
       <div><div class="g-name">${it.name}</div>${subLine ? `<div class="g-sub">${subLine}</div>` : ''}</div>
       <div class="g-val ${c}">${arrowHtml(c)}${cur === 'USD' ? '$' : ''}${numSpan(`gold-${it.k}`, v, dec(v))}${cur !== 'USD' ? `<span class="sym">${cfg.sym}</span>` : ''}</div>
@@ -567,14 +705,18 @@ function renderGold(animate) {
   }).join('');
   fillNums($('goldList'), animate);
   renderGoldCalc(animate);
-  // وقت مستقل للذهب: نعرض وقت نشرة الذهب الفعلية (أو وقت الأونصة العالمية)، ولا نخلطه بوقت جلب العملات
+  updateGoldTimeLabels();
+}
+
+function updateGoldTimeLabels() {
+  const g = state.rates?.gold;
+  if (!g) return;
   const gt = g.post_time || g.ounce_time || null;
   const gAgeH = gt ? (Date.now() - Date.parse(gt)) / 3600e3 : Infinity;
   const ageTag = $('goldAgeTag');
-  if (ageTag) ageTag.textContent = gt ? (g.post_time ? `نشرة ${ago(gt)}` : `أونصة ${ago(gt)}`) : 'وقت غير محدد';
-  $('goldTime').textContent = gt
-    ? `${fmtTime(gt)} (${ago(gt)})${g.source ? ' · ' + g.source : ''}`
-    : 'غير متوفر';
+  if (ageTag) ageTag.textContent = gt ? `نشرة ${ago(gt)}` : 'وقت غير محدد';
+  const gtEl = $('goldTime');
+  if (gtEl) gtEl.textContent = gt ? `${fmtTime(gt)} (${ago(gt)})${g.source ? ' · ' + g.source : ''}` : 'غير متوفر';
   const gNote = $('goldFreshNote');
   if (gNote) {
     if (g.post_time && gAgeH >= 12) {
@@ -582,6 +724,27 @@ function renderGold(animate) {
       gNote.hidden = false;
     } else gNote.hidden = true;
   }
+}
+
+// تحديث خفيف لأوقات النشرة فقط كل 30 ثانية بدون إعادة بناء DOM القوائم (يمنع التقطيع والتجمّد)
+function updateTimeLabelsOnly() {
+  const r = state.rates;
+  if (r) {
+    const srcKindLabel = r.source_kind === 'manual' ? 'معتمد يدوياً' : r.source_kind === 'whatsapp' ? 'واتساب' : 'تلغرام';
+    const postAgeH = r.post_time ? (Date.now() - Date.parse(r.post_time)) / 3600e3 : Infinity;
+    const fs = $('freshStrip');
+    if (fs && !fs.hidden) {
+      fs.classList.toggle('old', postAgeH >= 4);
+      $('freshText').textContent = r.post_time
+        ? `نشرة العملات: ${ago(r.post_time)} (${fmtTime(r.post_time)}) · ${srcKindLabel}`
+        : `تحديث ${state.lastOkAt ? ago(state.lastOkAt) : '—'} · ${srcKindLabel}`;
+    }
+    if ($('timesShort')) $('timesShort').textContent = r.post_time ? `التفاصيل والمصادر · آخر جلب ${state.lastOkAt ? ago(state.lastOkAt) : '—'}` : 'التفاصيل والمصادر';
+    if ($('postTime')) $('postTime').textContent = r.post_time ? `${fmtTime(r.post_time)} (${ago(r.post_time)})` : '—';
+    if ($('fetchTime')) $('fetchTime').textContent = state.lastOkAt ? `${fmtTime(state.lastOkAt)} (${ago(state.lastOkAt)})` : '—';
+    updateGoldTimeLabels();
+  }
+  renderStatus();
 }
 
 // حاسبة الذهب: (سعر الغرام + أجرة الصياغة للغرام) × عدد الغرامات — الذهب والصياغة بالدولار افتراضياً
@@ -831,9 +994,10 @@ async function myVersionCode() {
 async function checkApkUpdate(manual = false) {
   if (!CFG.VERSION_URL || apkChecking) return;
   if (!isNative) { if (manual) toast('فحص التحديثات بيشتغل جوا التطبيق'); return; }
+  if (!(await checkOnlineFast())) { if (manual) toast('ما في اتصال بالإنترنت حالياً'); return; }
   apkChecking = true;
   try {
-    const v = await (await fetchWithTimeout(CFG.VERSION_URL + '?t=' + Date.now(), 10000)).json();
+    const v = await (await fetchWithTimeout(CFG.VERSION_URL + '?t=' + Date.now(), 6000)).json();
     const mine = await myVersionCode();
     if (!v || !(v.versionCode > mine) || !v.apkUrl) { if (manual) toast('عندك آخر نسخة ✓'); return; }
     if (!manual && store.get(LS.updSkip) === v.versionCode) return; // "لاحقاً": منرجع نذكّره بالفتح الجاي بس إذا فحص يدوي
@@ -905,10 +1069,10 @@ function updateUrl() { return CFG.UPDATE_URL || workerPath('/update'); }
 let updateChecking = false;
 async function checkUpdates() {
   const url = updateUrl();
-  if (!url || updateChecking) return;
+  if (!url || updateChecking || !(await checkOnlineFast())) return;
   updateChecking = true;
   try {
-    const u = await (await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), 10000)).json();
+    const u = await (await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), 6000)).json();
     if (u.config) store.set(LS.remote, u.config); // إعدادات عن بعد (القنوات) بدون تحديث التطبيق
     const N = P('SarrafNative');
     if (!N) return;
@@ -1117,7 +1281,12 @@ function openVideoPop() {
   $('wvTitle').textContent = currentWeeklyVideo.title || 'فيديو جديد على قناتي';
   const desc = $('wvDesc');
   if (desc) { desc.textContent = currentWeeklyVideo.desc || ''; desc.hidden = !currentWeeklyVideo.desc; }
-  $('wvOpen').onclick = () => { closeVideoPop(); openExternal(currentWeeklyVideo.url); };
+  $('wvOpen').onclick = () => {
+    const targetUrl = currentWeeklyVideo?.url;
+    // إزالة الزر العائم نهائياً لهذا الفيديو بعد الضغط على المشاهدة (يعود تلقائياً فقط مع فيديو أسبوع جديد)
+    hideVideoBubble();
+    if (targetUrl) openExternal(targetUrl);
+  };
   const bd = $('videoPopBackdrop'), pop = $('videoPop');
   bd.hidden = false; pop.hidden = false;
   void bd.offsetWidth;
@@ -1210,9 +1379,9 @@ async function loadTip() {
   const cached = store.get(LS.wvCache) || (ytFallback ? { title: 'شاهد أحدث فيديو على قناتي', url: ytFallback.url, date: 'channel' } : null);
   if (cached) showWeeklyBubble(cached);
   const url = contentUrl();
-  if (!url) return;
+  if (!url || !(await checkOnlineFast())) return;
   try {
-    const c = await (await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + 't=' + Math.floor(Date.now() / 300000), 8000)).json();
+    const c = await (await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + 't=' + Math.floor(Date.now() / 300000), 6000)).json();
     const wv = c && c.weekly_video;
     if (wv && wv.url && /^https?:\/\//i.test(wv.url)) {
       store.set(LS.wvCache, wv);
@@ -1255,15 +1424,19 @@ async function runnerEvent(event, details = {}) {
   if (!BR) return null;
   return BR.dispatchEvent({ label: RUNNER_LABEL, event, details });
 }
-async function pushRunnerSettings() {
+async function pushRunnerSettings(force = true) {
   const n = notifySettings();
+  const payload = {
+    enabled: n.enabled, time: n.times[0], times: n.times, apiUrl: apiUrl(), channels: channels(),
+    goldChannels: CFG.GOLD_CHANNELS || '', goldApi: '', contentUrl: contentUrl(),
+    goldCur: state.goldCur, oldPerNew: RATIO, mode: state.mode, alert: alertSettings(),
+    change: changeSettings(), order: enabledIds(), bgRefresh: true,
+  };
+  const sig = JSON.stringify(payload);
+  if (!force && store.get(LS.runnerSig) === sig) return;
   try {
-    await runnerEvent('configure', {
-      enabled: n.enabled, time: n.times[0], times: n.times, apiUrl: apiUrl(), channels: channels(),
-      goldChannels: CFG.GOLD_CHANNELS || '', goldApi: CFG.GOLD_API, contentUrl: contentUrl(),
-      goldCur: state.goldCur, oldPerNew: RATIO, mode: state.mode, alert: alertSettings(),
-      change: changeSettings(), order: enabledIds(), bgRefresh: true,
-    });
+    await runnerEvent('configure', payload);
+    store.set(LS.runnerSig, sig);
   } catch (e) { console.warn('runner configure', e); }
 }
 async function pushMorning() {
@@ -1726,7 +1899,8 @@ function init() {
     } catch {}
   }
 
-  window.addEventListener('online', () => { refresh(); loadTip(); });
+  window.addEventListener('online', () => { state.online = true; renderStatus(); refresh({ force: true }); loadTip(); });
+  window.addEventListener('offline', () => { state.online = false; renderStatus(); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     syncFromBackground();
@@ -1735,7 +1909,7 @@ function init() {
     if (currentView === 'settings') fillSettings();
     if (waitingInstallPerm && apkReady) { waitingInstallPerm = false; installDownloaded(); }
   });
-  setInterval(() => { if (!document.hidden) { renderRates(false); renderGold(false); renderStatus(); } }, 30000);
+  setInterval(() => { if (!document.hidden) updateTimeLabelsOnly(); }, 30000);
 
   setupPeople();
   setupOldNew();
@@ -1744,16 +1918,18 @@ function init() {
   setupLongPress();
   setupVideoBubble();
   render(false);
-  syncFromBackground().finally(() => refresh());
-  loadTip();
-  loadRemoteHistory();
+  // مزامنة فورية من الخلفية ثم تحديث مباشر بدون تجميد الإطلاق
+  syncFromBackground().finally(() => refresh({ force: true }));
+  // تأخير المهام الثانوية بشكل متدرّج حتى لا تتزاحم عند الإطلاق خصوصاً عند ضعف الشبكة
+  setTimeout(() => loadTip(), 600);
+  setTimeout(() => loadRemoteHistory(), 1500);
   setupNotifyPrompt();
-  pushRunnerSettings();
-  if (notifySettings().enabled) pushMorning();
+  setTimeout(() => pushRunnerSettings(false), 2000);
+  if (notifySettings().enabled) setTimeout(() => pushMorning(), 2200);
   P('SarrafNative')?.otaReady().catch(() => {});
   checkOpenFromUpdateNotification();
-  setTimeout(checkUpdates, 4000);
-  setTimeout(() => checkApkUpdate(false), 2500);
+  setTimeout(() => checkApkUpdate(false), 3200);
+  setTimeout(() => checkUpdates(), 4800);
   setInterval(checkUpdates, 6 * 3600e3);
 }
 

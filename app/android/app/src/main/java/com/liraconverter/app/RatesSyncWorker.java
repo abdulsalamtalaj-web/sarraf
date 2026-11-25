@@ -31,7 +31,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
@@ -115,9 +117,11 @@ public class RatesSyncWorker extends Worker {
     private String httpGet(String urlStr) throws Exception {
         HttpURLConnection con = (HttpURLConnection) new URL(urlStr).openConnection();
         try {
-            con.setConnectTimeout(12000);
-            con.setReadTimeout(15000);
-            con.setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; Sarraf/3.4)");
+            con.setUseCaches(false);
+            con.setConnectTimeout(8000);
+            con.setReadTimeout(10000);
+            con.setRequestProperty("Cache-Control", "no-cache");
+            con.setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; Sarraf/3.5)");
             int code = con.getResponseCode();
             if (code != 200) throw new Exception("HTTP " + code);
             StringBuilder sb = new StringBuilder();
@@ -134,15 +138,27 @@ public class RatesSyncWorker extends Worker {
     private void saveFreshRates(Context c, JSONObject fresh) {
         try {
             JSONObject prev = SarrafData.runnerJson(c, "lastRates");
-            if (!fresh.has("gold") && prev != null && prev.has("gold")) {
-                fresh.put("gold", prev.get("gold"));
-            }
-            if (prev != null && prev.has("usd_syp")) {
-                JSONObject prevUsd = prev.optJSONObject("usd_syp");
-                JSONObject curUsd = fresh.optJSONObject("usd_syp");
-                if (prevUsd != null && curUsd != null
-                    && (prevUsd.optDouble("buy") != curUsd.optDouble("buy") || prevUsd.optDouble("sell") != curUsd.optDouble("sell"))) {
-                    SarrafData.prefs(c).edit().putString("prevBgUsd", prevUsd.toString()).apply();
+            if (prev != null) {
+                long prevPost = SarrafData.parseIso(prev.optString("post_time", null));
+                long newPost = SarrafData.parseIso(fresh.optString("post_time", null));
+                // لا نكتب نشرة أقدم فوق نشرة أحدث محفوظة
+                if (prevPost > 0 && newPost > 0 && newPost < prevPost) return;
+                if (!fresh.has("gold") && prev.has("gold")) {
+                    JSONObject prevGold = prev.optJSONObject("gold");
+                    if (prevGold != null && !"gold-api".equals(prevGold.optString("source"))) {
+                        fresh.put("gold", prevGold);
+                    }
+                }
+                if (!fresh.has("remit") && prev.has("remit")) {
+                    fresh.put("remit", prev.get("remit"));
+                }
+                if (prev.has("usd_syp")) {
+                    JSONObject prevUsd = prev.optJSONObject("usd_syp");
+                    JSONObject curUsd = fresh.optJSONObject("usd_syp");
+                    if (prevUsd != null && curUsd != null
+                        && (prevUsd.optDouble("buy") != curUsd.optDouble("buy") || prevUsd.optDouble("sell") != curUsd.optDouble("sell"))) {
+                        SarrafData.prefs(c).edit().putString("prevBgUsd", prevUsd.toString()).apply();
+                    }
                 }
             }
             SarrafData.runner(c).edit().putString("lastRates", fresh.toString()).apply();
@@ -153,66 +169,235 @@ public class RatesSyncWorker extends Worker {
 
     private boolean fetchFromWorker(Context c, String apiUrl) throws Exception {
         String sep = apiUrl.contains("?") ? "&" : "?";
-        JSONObject fresh = new JSONObject(httpGet(apiUrl + sep + "bg=1"));
+        JSONObject fresh = new JSONObject(httpGet(apiUrl + sep + "bg=1&_t=" + System.currentTimeMillis()));
         if (!fresh.has("usd_syp")) return false;
         saveFreshRates(c, fresh);
         return true;
     }
 
-    /** جلب احتياطي مباشر للويدجت عندما لا يكون رابط الخادم المركزي مضبوطاً بعد */
+    /** جلب احتياطي مباشر من قنوات تلغرام (العملات + الذهب من النشرة نفسها، بلا البورصة العالمية) */
     private void fetchDirectFallback(Context c, JSONObject settings) throws Exception {
-        String ch = "exchange_Currencyy";
+        List<String> channels = new ArrayList<>();
         if (settings != null) {
             JSONArray arr = settings.optJSONArray("channels");
-            if (arr != null && arr.length() > 0 && !arr.optString(0).isEmpty()) ch = arr.optString(0);
-        }
-        String html = httpGet("https://t.me/s/" + ch);
-        String[] blocks = html.split("tgme_widget_message_wrap");
-        JSONObject found = null;
-        for (int i = blocks.length - 1; i >= 1; i--) {
-            String blk = blocks[i];
-            Matcher tm = Pattern.compile("<time[^>]*datetime=\"([^\"]+)\"").matcher(blk);
-            String postTime = tm.find() ? tm.group(1) : null;
-            Matcher mm = Pattern.compile("<div class=\"tgme_widget_message_text[^\"]*\"[^>]*>([\\s\\S]*?)</div>").matcher(blk);
-            if (!mm.find()) continue;
-            String text = mm.group(1).replaceAll("<br\\s*/?>", "\n").replaceAll("<[^>]+>", " ").replace("&nbsp;", " ");
-            JSONObject parsed = parseQuickBulletin(text);
-            if (parsed != null && parsed.has("usd_syp")) {
-                if (postTime != null) parsed.put("post_time", postTime);
-                parsed.put("source", ch);
-                parsed.put("source_kind", "telegram");
-                found = parsed;
-                break;
+            if (arr != null) {
+                for (int i = 0; i < arr.length(); i++) {
+                    String s = arr.optString(i, "").trim().replaceFirst("^@", "");
+                    if (!s.isEmpty()) channels.add(s);
+                }
             }
         }
-        if (found == null) return;
+        if (channels.isEmpty()) {
+            channels.add("exchange_Currencyy");
+            channels.add("aboothman33");
+        }
 
-        // جلب الأونصة العالمية لحساب الذهب بالدولار
+        JSONObject bestRates = null;
+        long bestRatesPost = 0;
+        JSONObject bestGold = null;
+        long bestGoldPost = 0;
+        long bust = System.currentTimeMillis();
+
+        for (String ch : channels) {
+            try {
+                String html = httpGet("https://t.me/s/" + ch + "?_t=" + bust);
+                String[] blocks = html.split("tgme_widget_message_wrap");
+                JSONObject chRates = null;
+                long chRatesPost = 0;
+                JSONObject chGold = null;
+                long chGoldPost = 0;
+
+                for (int i = blocks.length - 1; i >= 1; i--) {
+                    String blk = blocks[i];
+                    Matcher tm = Pattern.compile("<time[^>]*datetime=\"([^\"]+)\"").matcher(blk);
+                    String postTime = tm.find() ? tm.group(1) : null;
+                    long postMs = SarrafData.parseIso(postTime);
+                    Matcher mm = Pattern.compile("<div class=\"tgme_widget_message_text[^\"]*\"[^>]*>([\\s\\S]*?)</div>").matcher(blk);
+                    if (!mm.find()) continue;
+                    String text = decodeHtml(mm.group(1));
+
+                    if (chRates == null) {
+                        JSONObject parsed = parseQuickBulletin(text);
+                        if (parsed != null && parsed.has("usd_syp")) {
+                            if (postTime != null) parsed.put("post_time", postTime);
+                            parsed.put("source", ch);
+                            parsed.put("source_kind", "telegram");
+                            chRates = parsed;
+                            chRatesPost = postMs;
+                        }
+                    }
+                    if (chGold == null) {
+                        JSONObject parsedGold = parseQuickGold(text, postTime, ch);
+                        if (parsedGold != null) {
+                            chGold = parsedGold;
+                            chGoldPost = postMs;
+                        }
+                    }
+                    if (chRates != null && chGold != null) break;
+                }
+
+                if (chRates != null && (bestRates == null || chRatesPost > bestRatesPost)) {
+                    bestRates = chRates;
+                    bestRatesPost = chRatesPost;
+                }
+                if (chGold != null && (bestGold == null || chGoldPost > bestGoldPost)) {
+                    bestGold = chGold;
+                    bestGoldPost = chGoldPost;
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "tg channel fetch err " + ch, e);
+            }
+        }
+
+        if (bestRates == null) return;
+        if (bestGold != null) {
+            finalizeGoldWithUsd(bestGold, bestRates.getJSONObject("usd_syp"));
+            bestRates.put("gold", bestGold);
+        }
+        bestRates.put("fetched", isoNow());
+        saveFreshRates(c, bestRates);
+    }
+
+    private static String decodeHtml(String h) {
+        return h
+            .replaceAll("<br\\s*/?>", "\n")
+            .replaceAll("</(?:p|div)>", "\n")
+            .replaceAll("<[^>]+>", " ")
+            .replace("&#036;", "$")
+            .replace("&#36;", "$")
+            .replace("&nbsp;", " ")
+            .replace("&rlm;", "")
+            .replace("&lrm;", "")
+            .replace("&amp;", "&");
+    }
+
+    private static JSONObject parseQuickGold(String text, String postTime, String channel) {
         try {
-            JSONObject gApi = new JSONObject(httpGet("https://api.gold-api.com/price/XAU"));
-            double oz = gApi.optDouble("price", Double.NaN);
-            if (!Double.isNaN(oz) && oz > 500 && oz < 20000) {
-                double g24 = oz / 31.1034768;
-                double g21 = g24 * 21.0 / 24.0;
-                double g18 = g24 * 18.0 / 24.0;
-                JSONObject gusd = new JSONObject();
-                gusd.put("24", Math.round(g24 * 100.0) / 100.0);
-                gusd.put("21", Math.round(g21 * 100.0) / 100.0);
-                gusd.put("18", Math.round(g18 * 100.0) / 100.0);
-                gusd.put("lira", Math.round(g21 * 8.0 * 100.0) / 100.0);
-                JSONObject gold = new JSONObject();
-                gold.put("ounce_usd", Math.round(oz * 100.0) / 100.0);
-                gold.put("usd", gusd);
-                gold.put("is_local", false);
-                gold.put("estimated", true);
-                gold.put("ounce_time", isoNow());
-                gold.put("source", "gold-api");
-                found.put("gold", gold);
-            }
-        } catch (Exception ignored) { }
+            String norm = normalizeArabicDigits(text);
+            if (!norm.contains("ذهب") && !norm.contains("عيار")) return null;
+            boolean sectionUsd = norm.contains("الذهب بالدولار") || norm.contains("$");
+            double g21Buy = Double.NaN, g21Sell = Double.NaN;
+            double g24Buy = Double.NaN, g24Sell = Double.NaN;
+            double g18Buy = Double.NaN, g18Sell = Double.NaN;
+            boolean g21Syp = false, g24Syp = false, g18Syp = false;
+            double ounce = Double.NaN;
+            String curK = null;
 
-        found.put("fetched", isoNow());
-        saveFreshRates(c, found);
+            for (String raw : norm.split("\n")) {
+                String l = raw.trim();
+                if (l.isEmpty()) continue;
+                boolean isGoldLine = l.contains("ذهب") || l.contains("عيار");
+                if (!isGoldLine && (l.contains("فضة") || l.contains("فضه") || l.contains("يورو") || l.contains("ريال")
+                    || l.contains("برنت") || l.contains("نفط") || l.contains("بيتكوين") || l.contains("━"))) {
+                    curK = null;
+                    continue;
+                }
+                if ((l.contains("أونص") || l.contains("اونص")) && l.contains("ذهب")) {
+                    curK = null;
+                    Matcher om = Pattern.compile("(\\d+(?:[.,]\\d+)?)").matcher(l);
+                    if (om.find()) {
+                        double v = parseNum(om.group(1));
+                        if (v > 500 && v < 20000) ounce = v;
+                    }
+                    continue;
+                }
+                Matcher km = Pattern.compile("عيار\\s*(24|21|18)\\b").matcher(l);
+                if (km.find() && !l.contains("أونص") && !l.contains("اونص")) {
+                    curK = km.group(1);
+                    String after = l.substring(km.end());
+                    boolean isSyp = l.contains("ل.س") || l.contains("سوري") || (!l.contains("$") && !l.contains("دولار") && !sectionUsd);
+                    boolean hasBS = after.contains("شراء") || after.contains("مبيع") || after.contains("بيع");
+                    if (hasBS) {
+                        Matcher nb = Pattern.compile("(?:شراء|الشراء)[^\\d]*(\\d+(?:[.,]\\d+)?)").matcher(after);
+                        Matcher ns = Pattern.compile("(?:مبيع|المبيع|بيع)[^\\d]*(\\d+(?:[.,]\\d+)?)").matcher(after);
+                        double vb = nb.find() ? parseNum(nb.group(1)) : Double.NaN;
+                        double vs = ns.find() ? parseNum(ns.group(1)) : Double.NaN;
+                        if ("21".equals(curK)) { if (!Double.isNaN(vb)) g21Buy = vb; if (!Double.isNaN(vs)) g21Sell = vs; g21Syp = isSyp && (vb > 5000 || vs > 5000 || l.contains("ل.س")); }
+                        else if ("24".equals(curK)) { if (!Double.isNaN(vb)) g24Buy = vb; if (!Double.isNaN(vs)) g24Sell = vs; g24Syp = isSyp && (vb > 5000 || vs > 5000 || l.contains("ل.س")); }
+                        else if ("18".equals(curK)) { if (!Double.isNaN(vb)) g18Buy = vb; if (!Double.isNaN(vs)) g18Sell = vs; g18Syp = isSyp && (vb > 5000 || vs > 5000 || l.contains("ل.س")); }
+                    } else {
+                        Matcher nm = Pattern.compile("(\\d+(?:[.,]\\d+)*)").matcher(after);
+                        if (nm.find()) {
+                            double v = parseNum(nm.group(1));
+                            boolean syp = l.contains("ل.س") || l.contains("سوري") || (!l.contains("$") && !l.contains("دولار") && v > 5000);
+                            if ("21".equals(curK)) { g21Buy = v; g21Sell = v; g21Syp = syp; }
+                            else if ("24".equals(curK)) { g24Buy = v; g24Sell = v; g24Syp = syp; }
+                            else if ("18".equals(curK)) { g18Buy = v; g18Sell = v; g18Syp = syp; }
+                            curK = null;
+                        }
+                    }
+                    continue;
+                }
+                if (curK != null && (l.contains("شراء") || l.contains("مبيع") || l.contains("بيع"))) {
+                    Matcher nb = Pattern.compile("(?:شراء|الشراء)[^\\d]*(\\d+(?:[.,]\\d+)*)").matcher(l);
+                    Matcher ns = Pattern.compile("(?:مبيع|المبيع|بيع)[^\\d]*(\\d+(?:[.,]\\d+)*)").matcher(l);
+                    double vb = nb.find() ? parseNum(nb.group(1)) : Double.NaN;
+                    double vs = ns.find() ? parseNum(ns.group(1)) : Double.NaN;
+                    boolean syp = l.contains("ل.س") || l.contains("سوري") || (!l.contains("$") && !l.contains("دولار") && !sectionUsd && (vb > 5000 || vs > 5000));
+                    if ("21".equals(curK)) { if (!Double.isNaN(vb)) g21Buy = vb; if (!Double.isNaN(vs)) g21Sell = vs; g21Syp = syp; }
+                    else if ("24".equals(curK)) { if (!Double.isNaN(vb)) g24Buy = vb; if (!Double.isNaN(vs)) g24Sell = vs; g24Syp = syp; }
+                    else if ("18".equals(curK)) { if (!Double.isNaN(vb)) g18Buy = vb; if (!Double.isNaN(vs)) g18Sell = vs; g18Syp = syp; }
+                }
+            }
+
+            boolean hasGram = !Double.isNaN(g21Buy) || !Double.isNaN(g21Sell) || !Double.isNaN(g24Buy) || !Double.isNaN(g24Sell) || !Double.isNaN(g18Buy) || !Double.isNaN(g18Sell);
+            if (!hasGram && Double.isNaN(ounce)) return null;
+
+            JSONObject gold = new JSONObject();
+            if (!Double.isNaN(ounce)) gold.put("ounce_usd", round2(ounce));
+            gold.put("is_local", hasGram);
+            gold.put("estimated", !hasGram);
+            if (postTime != null) gold.put("post_time", postTime);
+            gold.put("source", channel);
+            gold.put("source_kind", "telegram");
+
+            if (!g21Syp && (!Double.isNaN(g21Sell) || !Double.isNaN(g21Buy))) {
+                double s21 = Double.isNaN(g21Sell) ? g21Buy : g21Sell;
+                double b21 = Double.isNaN(g21Buy) ? g21Sell : g21Buy;
+                if (b21 > s21) { double t = b21; b21 = s21; s21 = t; }
+                gold.put("usd", buildKaratMap(s21, Double.isNaN(g24Sell) ? Double.NaN : g24Sell, Double.isNaN(g18Sell) ? Double.NaN : g18Sell));
+                if (b21 != s21) gold.put("usd_buy", buildKaratMap(b21, Double.isNaN(g24Buy) ? Double.NaN : g24Buy, Double.isNaN(g18Buy) ? Double.NaN : g18Buy));
+            } else if (g21Syp && (!Double.isNaN(g21Sell) || !Double.isNaN(g21Buy))) {
+                double s21 = Double.isNaN(g21Sell) ? g21Buy : g21Sell;
+                gold.put("_raw_syp21", s21);
+            } else if (!Double.isNaN(ounce)) {
+                double g24 = ounce / 31.1034768;
+                gold.put("usd", buildKaratMap(g24 * 21.0 / 24.0, g24, g24 * 18.0 / 24.0));
+            }
+            return gold;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void finalizeGoldWithUsd(JSONObject gold, JSONObject usdSyp) throws Exception {
+        double usdSell = usdSyp.optDouble("sell", Double.NaN);
+        if (gold.has("_raw_syp21") && !Double.isNaN(usdSell) && usdSell > 0) {
+            double raw = gold.optDouble("_raw_syp21", Double.NaN);
+            gold.remove("_raw_syp21");
+            if (!Double.isNaN(raw)) {
+                if (raw / usdSell > 2000) raw = raw / 100.0;
+                gold.put("syp", buildKaratMap(raw, Double.NaN, Double.NaN));
+                gold.put("usd", buildKaratMap(raw / usdSell, Double.NaN, Double.NaN));
+            }
+        }
+    }
+
+    private static JSONObject buildKaratMap(double k21, double k24, double k18) throws Exception {
+        double base24 = !Double.isNaN(k21) ? (k21 * 24.0 / 21.0) : !Double.isNaN(k24) ? k24 : (k18 * 24.0 / 18.0);
+        double v21 = !Double.isNaN(k21) ? k21 : base24 * 21.0 / 24.0;
+        double v24 = !Double.isNaN(k24) ? k24 : base24;
+        double v18 = !Double.isNaN(k18) ? k18 : base24 * 18.0 / 24.0;
+        JSONObject m = new JSONObject();
+        m.put("21", round2(v21));
+        m.put("24", round2(v24));
+        m.put("18", round2(v18));
+        m.put("lira", round2(v21 * 8.0));
+        return m;
+    }
+
+    private static double round2(double v) {
+        return Math.round(v * 100.0) / 100.0;
     }
 
     private static JSONObject parseQuickBulletin(String text) {
@@ -224,16 +409,26 @@ public class RatesSyncWorker extends Worker {
             for (String raw : norm.split("\n")) {
                 String l = raw.trim();
                 if (l.isEmpty()) continue;
-                if (l.contains("دولار") && !l.contains("ترك")) cur = "usd";
-                else if (l.contains("ترك")) cur = "try";
-                else if (l.contains("يورو")) cur = "eur";
-                else if (l.contains("ريال") || l.contains("درهم") || l.contains("دينار") || l.contains("ذهب")) cur = null;
+                boolean hasSyp = l.contains("سوري") || l.contains("ل.س") || l.contains("SYP");
+                boolean hasUsd = l.contains("دولار") || l.contains("USD") || l.contains("$");
+                boolean hasTr = l.contains("ترك") || l.contains("TRY");
+                boolean hasEur = l.contains("يورو") || l.contains("EUR");
+                boolean hasOther = l.contains("ريال") || l.contains("درهم") || l.contains("دينار") || l.contains("ذهب")
+                    || l.contains("عيار") || l.contains("فضة") || l.contains("فضه") || l.contains("برنت")
+                    || l.contains("نفط") || l.contains("بيتكوين") || l.contains("أونص") || l.contains("اونص");
+                if (hasOther) { cur = null; continue; }
+                // تجاهل أزواج مثل "اليورو مقابل الدولار" أو "الدولار مقابل التركي" عندما لا تُذكر الليرة السورية
+                if (hasEur && hasUsd && !hasSyp) { cur = null; continue; }
+                if (hasTr && hasUsd && !hasSyp) { cur = null; continue; }
+                if (hasTr) cur = "try";
+                else if (hasEur) cur = "eur";
+                else if (hasUsd) cur = "usd";
                 if (cur == null) continue;
                 double[] target = "usd".equals(cur) ? usd : "try".equals(cur) ? tr : eur;
                 if (l.contains("شراء") || l.contains("مبيع") || l.contains("بيع")) {
-                    Matcher nb = Pattern.compile("(?:شراء|الشراء)[^\\d]*(\\d+(?:[.,]\\d+)?)").matcher(l);
+                    Matcher nb = Pattern.compile("(?:شراء|الشراء)[^\\d]*(\\d+(?:[.,]\\d+)*)").matcher(l);
                     if (nb.find() && Double.isNaN(target[0])) target[0] = parseNum(nb.group(1));
-                    Matcher ns = Pattern.compile("(?:مبيع|المبيع|بيع)[^\\d]*(\\d+(?:[.,]\\d+)?)").matcher(l);
+                    Matcher ns = Pattern.compile("(?:مبيع|المبيع|بيع)[^\\d]*(\\d+(?:[.,]\\d+)*)").matcher(l);
                     if (ns.find() && Double.isNaN(target[1])) target[1] = parseNum(ns.group(1));
                 }
             }
@@ -268,9 +463,22 @@ public class RatesSyncWorker extends Worker {
     }
 
     private static double parseNum(String s) {
-        String t = s.replace(",", ".");
-        if (t.matches("\\d{1,2}\\.\\d{3}")) return Double.parseDouble(t.replace(".", ""));
-        return Double.parseDouble(t);
+        if (s == null) return Double.NaN;
+        boolean hasDot = s.contains("."), hasComma = s.contains(",");
+        if (hasDot && hasComma) {
+            int last = Math.max(s.lastIndexOf('.'), s.lastIndexOf(','));
+            String dec = s.substring(last + 1);
+            String intPart = s.substring(0, last).replaceAll("[.,]", "");
+            return dec.length() == 3 ? Double.parseDouble(intPart + dec) : Double.parseDouble(intPart + "." + dec);
+        }
+        String sep = hasDot ? "\\." : hasComma ? "," : null;
+        if (sep == null) return Double.parseDouble(s);
+        String[] parts = s.split(sep);
+        if (parts.length > 2) return Double.parseDouble(s.replaceAll("[.,]", ""));
+        if (parts.length == 2 && parts[1].length() == 3 && !"0".equals(parts[0]) && parts[0].length() <= 3) {
+            return Double.parseDouble(parts[0] + parts[1]);
+        }
+        return Double.parseDouble(parts[0] + "." + (parts.length > 1 ? parts[1] : "0"));
     }
 
     private static String normalizeArabicDigits(String s) {

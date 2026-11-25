@@ -271,37 +271,139 @@ export function parseChannelPage(html) {
 }
 
 // ---------------- الذهب ----------------
-// يتعرف على أسطر مثل:
-//   "أونصة الذهب: $3941.85"     "عيار 21: $111"     "غرام عيار 21: ١٬٢٥٠٬٠٠٠ ل.س"
+// يتعرف على أسطر وصيغ متعددة من نشرات التليجرام والواتساب:
+//   "أونصة الذهب: $3552.32"
+//   "سعر عيار 21:\n🟢 شراء: $99\n🔴 مبيع: $101"
+//   "عيار 21: $111"  أو  "عيار 21: شراء 99$ / مبيع 101$"
+//   "غرام عيار 21: ١٬٢٥٠٬٠٠٠ ل.س"
 //   "الليرة الذهب: 9,800,000 ل.س"
-function currencyOf(line, value) {
+function currencyOf(line, value, fallbackCur = null) {
   if (/\$|دولار|USD/i.test(line)) return 'usd';
   if (/ل\.?\s?س|سوري|SYP/i.test(line)) return 'syp';
+  if (fallbackCur) return fallbackCur;
   return value > 5000 ? 'syp' : 'usd';
+}
+
+const GOLD_STOP_RE = /فض[ةه]|يورو|ريال|درهم|دينار|جنيه|استرليني|إسترليني|برنت|نفط|بيتكوين|ترك|الليرة\s+السوري|الدولار\s+الأمريكي|BTC|EUR|SAR|AED|TRY|━{3,}/i;
+
+function assignGoldEntry(target, curKarat, side, val, cur) {
+  if (!Number.isFinite(val) || val <= 0) return;
+  if (curKarat === 'lira') {
+    const prev = target.lira || { value: val, cur };
+    prev[side] = val;
+    prev.cur = cur || prev.cur;
+    prev.value = prev.sell ?? prev.buy ?? val;
+    target.lira = prev;
+    return;
+  }
+  const prev = target.gram[curKarat] || { value: val, cur };
+  prev[side] = val;
+  prev.cur = cur || prev.cur;
+  prev.value = prev.sell ?? prev.buy ?? val;
+  target.gram[curKarat] = prev;
 }
 
 export function parseGold(text) {
   const t = normalizeDigits(text);
   if (!/ذهب|عيار/.test(t)) return null;
   const g = { ounce_usd: null, gram: {}, lira: null };
+  let curKarat = null;
+  let sectionCur = null;
   for (const raw of t.split('\n')) {
     const line = raw.trim();
-    if (!line) continue;
-    const k = line.match(/عيار\s*(24|22|21|18|14)\s*[^\d]*?(\d(?:[\d.,]*\d)?)/);
-    if (k && !/أونص|اونص/.test(line)) {
-      const v = parseNumber(k[2]);
-      if (v) g.gram[k[1]] = { value: v, cur: currencyOf(line, v) };
+    if (!line) { continue; }
+    // إذا دخلنا بقسم فضة/عملات عالمية/نفط/بيتكوين نُنهي سياق العيار حتى لا تتسرب أرقام غريبة
+    if (GOLD_STOP_RE.test(line) && !/ذهب|عيار/.test(line)) {
+      curKarat = null;
       continue;
     }
+    if (/الذهب\s*بالدولار|ذهب[^\n]*(\$|\bUSD\b)/i.test(line)) sectionCur = 'usd';
+    else if (/الذهب\s*بالسوري|الذهب\s*بالليرة/i.test(line)) sectionCur = 'syp';
+
     if (/(أونص|اونص)[^\n]*ذهب|ذهب[^\n]*(أونص|اونص)/.test(line)) {
+      curKarat = null;
       const v = parseNumber(line.replace(/^[^\d]*/, ''));
       if (v && v > 500) g.ounce_usd = v; // الأونصة دائماً بالدولار
       continue;
     }
-    if (/(ليرة|الليرة)\s*(ال)?ذهب/.test(line)) {
-      const v = parseNumber(line.replace(/^[^\d]*/, ''));
-      if (v) g.lira = { value: v, cur: currencyOf(line, v) };
+
+    const kHead = line.match(/عيار\s*(24|22|21|18|14)\b/);
+    if (kHead && !/أونص|اونص/.test(line)) {
+      const k = kHead[1];
+      curKarat = k;
+      const after = line.slice(kHead.index + kHead[0].length);
+      const hasBuy = BUY_RE.test(after), hasSell = SELL_RE.test(after);
+      if (hasBuy || hasSell) {
+        const segs = after.split(/\s[\/|]\s|\s-\s|،\s/).flatMap((s) => s.split(/(?=شراء|مبيع|\bbuy|\bsell)/i));
+        for (const seg of segs) {
+          const isB = BUY_RE.test(seg), isS = !isB && SELL_RE.test(seg);
+          if (!isB && !isS) continue;
+          const v = parseNumber(seg.replace(KW_RE, ''));
+          if (v) assignGoldEntry(g, k, isB ? 'buy' : 'sell', v, currencyOf(seg + ' ' + line, v, sectionCur));
+        }
+      } else {
+        const nums = allNumbers(after);
+        if (nums.length >= 2) {
+          const cur = currencyOf(line, nums[0], sectionCur);
+          assignGoldEntry(g, k, 'buy', Math.min(nums[0], nums[1]), cur);
+          assignGoldEntry(g, k, 'sell', Math.max(nums[0], nums[1]), cur);
+        } else if (nums.length === 1) {
+          const v = nums[0];
+          g.gram[k] = { value: v, cur: currencyOf(line, v, sectionCur) };
+          curKarat = null; // سطر مكتمل برقم واحد
+        }
+      }
+      continue;
     }
+
+    if (/(ليرة|الليرة)\s*(ال)?ذهب/.test(line)) {
+      curKarat = 'lira';
+      const after = line.replace(/^.*?(?:ليرة|الليرة)\s*(?:ال)?ذهب/, '');
+      const hasBuy = BUY_RE.test(after), hasSell = SELL_RE.test(after);
+      if (hasBuy || hasSell) {
+        const segs = after.split(/\s[\/|]\s|\s-\s|،\s/).flatMap((s) => s.split(/(?=شراء|مبيع|\bbuy|\bsell)/i));
+        for (const seg of segs) {
+          const isB = BUY_RE.test(seg), isS = !isB && SELL_RE.test(seg);
+          if (!isB && !isS) continue;
+          const v = parseNumber(seg.replace(KW_RE, ''));
+          if (v) assignGoldEntry(g, 'lira', isB ? 'buy' : 'sell', v, currencyOf(seg + ' ' + line, v, sectionCur));
+        }
+      } else {
+        const nums = allNumbers(after);
+        if (nums.length >= 2) {
+          const cur = currencyOf(line, nums[0], sectionCur);
+          assignGoldEntry(g, 'lira', 'buy', Math.min(nums[0], nums[1]), cur);
+          assignGoldEntry(g, 'lira', 'sell', Math.max(nums[0], nums[1]), cur);
+        } else if (nums.length === 1) {
+          const v = nums[0];
+          g.lira = { value: v, cur: currencyOf(line, v, sectionCur) };
+          curKarat = null;
+        }
+      }
+      continue;
+    }
+
+    // أسطر شراء/مبيع تابعة لآخر عيار ذهب تم قراءته (مثل نشرة exchange_Currencyy)
+    if (curKarat && (BUY_RE.test(line) || SELL_RE.test(line))) {
+      const segs = line.split(/\s[\/|]\s|\s-\s|،\s/).flatMap((s) => s.split(/(?=شراء|مبيع|\bbuy|\bsell)/i));
+      for (const seg of segs) {
+        const isB = BUY_RE.test(seg), isS = !isB && SELL_RE.test(seg);
+        if (!isB && !isS) continue;
+        const v = parseNumber(seg.replace(KW_RE, ''));
+        if (v) assignGoldEntry(g, curKarat, isB ? 'buy' : 'sell', v, currencyOf(seg + ' ' + line, v, sectionCur));
+      }
+      continue;
+    }
+  }
+  // التأكد من صحة شراء <= مبيع في حال جاءت القيم معكوسة
+  for (const k of Object.keys(g.gram)) {
+    const it = g.gram[k];
+    if (it.buy != null && it.sell != null && it.buy > it.sell) {
+      const tmp = it.buy; it.buy = it.sell; it.sell = tmp; it.value = it.sell;
+    }
+  }
+  if (g.lira && g.lira.buy != null && g.lira.sell != null && g.lira.buy > g.lira.sell) {
+    const tmp = g.lira.buy; g.lira.buy = g.lira.sell; g.lira.sell = tmp; g.lira.value = g.lira.sell;
   }
   if (!g.ounce_usd && !Object.keys(g.gram).length && !g.lira) return null;
   return g;

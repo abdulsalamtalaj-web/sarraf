@@ -22,14 +22,38 @@ assert.deepEqual(inline.try_syp, { buy: 3.45, sell: 3.5 });
 assert.deepEqual(inline.eur_syp, { buy: 161, sell: 163 });
 assert.deepEqual(inline.try_usd, { buy: 42.1, sell: 42.3 });
 
-// 3) الذهب: صيغة القناة (بالدولار) وصيغة محلية بالليرة
+// 3) الذهب: صيغة القناة متعددة الأسطر (شراء/مبيع بالدولار) وصيغة سطر واحد وصيغة محلية بالليرة
 const g1 = parseGold('🥇 الذهب بالدولار\nأونصة الذهب: &#036;3941.85\nعيار 21: $111\nعيار 18: $95'.replace('&#036;', '$'));
 assert.equal(g1.ounce_usd, 3941.85);
 assert.deepEqual(g1.gram['21'], { value: 111, cur: 'usd' });
+const gMulti = parseGold(
+  '📊 أسعار الذهب والمعادن والعملات العالمية\n' +
+  '🥇 الذهب بالدولار\n' +
+  'أونصة الذهب: $3552.32\n' +
+  'سعر عيار 21:\n' +
+  '🟢 شراء: $99\n' +
+  '🔴 مبيع: $101\n' +
+  '💶 اليورو مقابل الدولار\n' +
+  '🟢 شراء: $1.08\n' +
+  '🔴 مبيع: $1.1',
+);
+assert.equal(gMulti.ounce_usd, 3552.32);
+assert.deepEqual(gMulti.gram['21'], { value: 101, buy: 99, sell: 101, cur: 'usd' });
 const g2 = parseGold('أسعار الذهب\nغرام عيار ٢١: ١٬٦٣٠٬٠٠٠ ل.س\nالليرة الذهب: 13,040,000 ل.س');
 assert.deepEqual(g2.gram['21'], { value: 1630000, cur: 'syp' });
 assert.equal(g2.lira.cur, 'syp');
 assert.equal(parseGold('🇺🇸 الليرة السورية مقابل الدولار\n🟢 شراء: 146.5 ل.س'), null);
+
+// ذهب نشرة تلغرام متعدد الأسطر: يأخذ $99 شراء / $101 مبيع حرفياً ولا يستبدله بالأونصة أو البورصة العالمية!
+const tgGoldTest = await buildRates(['x'], async () =>
+  `<div class="tgme_widget_message_wrap"><time datetime="2026-11-25T14:40:00+00:00"></time><div class="tgme_widget_message_text">الليرة السورية مقابل الدولار<br>شراء: 152.25<br>مبيع: 153.25</div></div>` +
+  `<div class="tgme_widget_message_wrap"><time datetime="2026-11-25T17:05:00+00:00"></time><div class="tgme_widget_message_text">🥇 الذهب بالدولار<br>أونصة الذهب: $3552.32<br>سعر عيار 21:<br>🟢 شراء: $99<br>🔴 مبيع: $101</div></div>`,
+  async () => ({ TRY: 42, EUR: 0.9 }));
+assert.equal(tgGoldTest.gold.usd['21'], 101);
+assert.equal(tgGoldTest.gold.usd_buy['21'], 99);
+assert.equal(tgGoldTest.gold.is_local, true);
+assert.equal(tgGoldTest.gold.estimated, false);
+assert.equal(tgGoldTest.gold.source, 'x');
 
 // ذهب محلي بالليرة القديمة → يتحول للجديدة ويُعتبر غير تقديري
 const local = await buildRates(['x'], async () =>

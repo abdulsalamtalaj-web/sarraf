@@ -51,6 +51,10 @@ public class RatesWidget extends AppWidgetProvider {
     }
 
     static void handleRefreshClick(Context c) {
+        if (!SarrafData.isNetworkAvailable(c)) {
+            updateAll(c); // بلا نت: لا نترك الويدجت عالقة على "جاري التحديث…"
+            return;
+        }
         showRefreshingAll(c);
         RatesSyncWorker.triggerImmediateRefresh(c);
     }
